@@ -66,6 +66,11 @@ class AlertService {
     }
   }
 
+  // Return only the in-memory active alerts without hitting Redis
+  getActiveAlertsLocal(): Alert[] {
+    return Array.from(this.active.values())
+  }
+
   async listHistory(): Promise<Alert[]> {
     try {
       const historyKey = 'monitor:alerts:history'

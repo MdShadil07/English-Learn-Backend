@@ -28,14 +28,12 @@ class RedisCache implements CacheConfig {
       }
 
       this.client = new (Redis as any)(this.REDIS_URL, {
-        // Connection options for better resilience in flaky networks
-        maxRetriesPerRequest: 5, // allow a few retries for transient failures
+        // Connection options for scalability
+        maxRetriesPerRequest: 0, // Don't retry failed requests
         enableReadyCheck: true,
         lazyConnect: true,
         connectTimeout: 5000,
         commandTimeout: 3000,
-        // Simple reconnect strategy (ms)
-        retryStrategy: (times: number) => Math.min(times * 50, 2000),
       });
 
       // Handle connection events

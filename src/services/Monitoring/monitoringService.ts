@@ -83,6 +83,15 @@ class MonitoringService {
       recentLogins,
     };
   }
+
+  // Return counts without reading Redis (in-memory fallback only)
+  async getCountsLocal(): Promise<Counts> {
+    const since = new Date(Date.now() - KEY_TTL * 1000);
+    const recentSignups = await User.countDocuments({ createdAt: { $gte: since } }).exec();
+    // do not read Redis — use in-memory counter only
+    const recentLogins = this.loginCounter;
+    return { recentSignups, recentLogins };
+  }
 }
 
 const monitoringService = new MonitoringService();

@@ -298,7 +298,7 @@ async function startServer(): Promise<void> {
       // simple validation
       if (!rule || !rule.id || !rule.type || !rule.threshold) return res.status(400).json({ error: 'invalid rule' })
       await svc.addRule(rule)
-      res.status(201).json({ ok: true })
+      return res.status(201).json({ ok: true })
     })
 
     app.delete('/monitor/alerts/rules/:id', monitorAuth, async (req, res) => {

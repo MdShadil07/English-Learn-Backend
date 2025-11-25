@@ -76,21 +76,9 @@ export class MonitoringController {
       }
 
       // Check Redis health
+      // Don't perform a blocking Redis read in health check; rely on connection state only
       if (redisCache.isConnected()) {
-        const redisStartTime = Date.now();
-        try {
-          await redisCache.get('health-check');
-          const redisResponseTime = Date.now() - redisStartTime;
-          healthCheck.services.redis.responseTime = redisResponseTime;
-
-          if (redisResponseTime > 500) {
-            healthCheck.services.redis.status = 'degraded';
-            if (healthCheck.status === 'healthy') healthCheck.status = 'degraded';
-          }
-        } catch (error) {
-          healthCheck.services.redis.status = 'unhealthy';
-          healthCheck.status = 'degraded';
-        }
+        healthCheck.services.redis.status = 'healthy';
       } else {
         healthCheck.services.redis.status = 'unhealthy';
         healthCheck.status = 'degraded';
@@ -232,6 +220,10 @@ export class MonitoringController {
       const pm = process.memoryUsage();
       const cpu = process.cpuUsage();
 
+      // Use local-only getters to avoid hitting Redis from the realtime endpoint
+      const alertSvc = (await import('../../services/Monitoring/alertService.js')).default;
+      const monitoringSvc = (await import('../../services/Monitoring/monitoringService.js')).default;
+
       const snapshot = {
         timestamp: Date.now(),
         uptime: process.uptime(),
@@ -248,7 +240,10 @@ export class MonitoringController {
         },
         requests: reqMetrics.getSnapshot(),
         routes: routeMetrics.getStats(),
-        alerts: (await (await import('../../services/Monitoring/alertService.js')).default.getActiveAlerts()) || []
+        // local-only active alerts (no Redis read)
+        alerts: alertSvc.getActiveAlertsLocal ? alertSvc.getActiveAlertsLocal() : [] ,
+        // lightweight counts (no Redis read)
+        counts: await (monitoringSvc.getCountsLocal ? monitoringSvc.getCountsLocal() : monitoringSvc.getCounts())
       }
 
       return res.json(snapshot);
@@ -281,9 +276,9 @@ export class MonitoringController {
         };
         // Attach counts from monitoring service if available
         try {
-          // dynamic import to avoid circular deps
+          // dynamic import to avoid circular deps — use local counts to avoid Redis
           const svc = (await import('../../services/Monitoring/monitoringService.js')).default;
-          const counts = await svc.getCounts();
+          const counts = svc.getCountsLocal ? await svc.getCountsLocal() : await svc.getCounts();
           payload.counts = counts;
         } catch (e) {
           // ignore
