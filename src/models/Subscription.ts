@@ -116,9 +116,8 @@ const subscriptionSchema = new Schema<ISubscription, ISubscriptionModel>(
 );
 
 // Indexes
+// Keep compound index for common queries, avoid duplicate single-field indexes (they are set inline above)
 subscriptionSchema.index({ userId: 1, status: 1 });
-subscriptionSchema.index({ endAt: 1 });
-subscriptionSchema.index({ 'razorpay.subscriptionId': 1 });
 
 // Static methods
 subscriptionSchema.statics.findActiveByUserId = function (userId: mongoose.Types.ObjectId) {

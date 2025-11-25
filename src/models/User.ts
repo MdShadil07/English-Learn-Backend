@@ -143,7 +143,7 @@ const userSchema = new Schema<IUser>(
 
 // Performance optimized indexes
 userSchema.index({ createdAt: -1 });
-userSchema.index({ 'subscription.status': 1 });
+// 'subscription.status' is already indexed inline inside the subscription subdocument; avoid duplicate index.
 userSchema.index({ 'subscription.expiresAt': 1 });
 
 // Virtuals

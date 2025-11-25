@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { User, RefreshToken, UserProfile } from '../../models/index.js';
+import monitoringService from '../../services/Monitoring/monitoringService.js';
 import { generateTokens } from '../../middleware/auth/auth.js';
 import authConfig from '../../config/auth.js';
 import { redisCache } from '../../config/redis.js';
@@ -79,6 +80,9 @@ export class AuthController {
       });
 
       await user.save();
+
+      // Increment monitoring signup counter
+      try { monitoringService.incrementSignup(); } catch (e) { /* non-fatal */ }
 
       // Generate tokens
       const { accessToken, refreshToken: refreshTokenValue } = generateTokens(user._id.toString(), user.email, user.role);
@@ -166,6 +170,9 @@ export class AuthController {
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
       });
       await refreshTokenDoc.save();
+
+      // Increment monitoring login counter when user logs in
+      try { monitoringService.incrementLogin(); } catch (e) { /* non-fatal */ }
 
       // Check subscription status
       const subDetails = await subscriptionService.getUserSubscription(user._id);

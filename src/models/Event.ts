@@ -42,7 +42,7 @@ const eventSchema = new Schema<IEvent, IEventModel>(
 
 // Indexes
 eventSchema.index({ userId: 1, createdAt: -1 });
-eventSchema.index({ type: 1 });
+// 'type' has `index: true` set on the field above — avoid duplicate single-field index.
 
 const Event: IEventModel = mongoose.model<IEvent, IEventModel>('Event', eventSchema);
 

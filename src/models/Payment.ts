@@ -74,9 +74,7 @@ const paymentSchema = new Schema<IPayment, IPaymentModel>(
 );
 
 // Indexes
-paymentSchema.index({ userId: 1 });
-paymentSchema.index({ paymentId: 1 });
-paymentSchema.index({ subscriptionId: 1 });
+// Field-level `index: true` is declared above for these fields. Avoid duplicate single-field indexes.
 
 // Static methods
 paymentSchema.statics.findByPaymentId = function (paymentId: string) {

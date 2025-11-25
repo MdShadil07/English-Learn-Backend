@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Learn English — Backend</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--muted:#9aa4b2;--accent:#60a5fa}
+    html,body{height:100%;margin:0}
+    body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,'Helvetica Neue',Arial;color:#e6eef6;background:linear-gradient(180deg,var(--bg),#08121a);display:flex;align-items:center;justify-content:center}
+    .card{max-width:880px;width:92%;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);padding:36px;border-radius:12px;box-shadow:0 6px 24px rgba(2,6,23,0.6)}
+    h1{margin:0 0 6px;font-size:24px}
+    p.lead{margin:0 0 18px;color:var(--muted)}
+    .grid{display:flex;gap:16px;flex-wrap:wrap}
+    .item{flex:1 1 260px;background:rgba(255,255,255,0.01);padding:14px;border-radius:8px;border:1px solid rgba(255,255,255,0.02)}
+    .muted{color:var(--muted);font-size:13px}
+    a.api{color:var(--accent);text-decoration:none;font-weight:600}
+    footer{margin-top:18px;color:var(--muted);font-size:13px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Learn English — Backend</h1>
+    <p class="lead">This server provides the API for the Learn English application. Use the endpoints below to check health and interact with the backend.</p>
+
+    <div class="grid">
+      <div class="item">
+        <div class="muted">Health</div>
+        <div><a class="api" href="/health" target="_blank">GET /health</a></div>
+        <div class="muted">Readiness &larr; Use these to check service health in deployments</div>
+        <div style="margin-top:8px"><a class="api" href="/ready">/ready</a> · <a class="api" href="/live">/live</a></div>
+      </div>
+
+      <div class="item">
+        <div class="muted">API Base</div>
+        <div><a class="api" href="/api" target="_blank">/api</a></div>
+        <div class="muted">Explore authentication and resource endpoints under <code>/api/*</code></div>
+      </div>
+
+      <div class="item">
+        <div class="muted">Metrics</div>
+        <div><a class="api" href="/metrics" target="_blank">/metrics</a></div>
+        <div class="muted">Prometheus metrics: <a class="api" href="/metrics/prometheus">/metrics/prometheus</a></div>
+      </div>
+    </div>
+
+    <footer>
+      <div>Server: Node.js • Express • TypeScript</div>
+      <div>Repository: <span class="muted">English-Learn-Backend</span></div>
+    </footer>
+  </div>
+</body>
+</html>

@@ -220,6 +220,113 @@ export class MonitoringController {
   }
 
   /**
+   * Combined realtime snapshot used by the SPA for charts
+   * GET /monitor/realtime
+   */
+  async realtimeMetrics(req: Request, res: Response) {
+    try {
+      // import request metrics helper
+      const reqMetrics = (await import('../../middleware/requestMetrics.js')).default;
+      const routeMetrics = (await import('../../middleware/routeMetrics.js')).default;
+
+      const pm = process.memoryUsage();
+      const cpu = process.cpuUsage();
+
+      const snapshot = {
+        timestamp: Date.now(),
+        uptime: process.uptime(),
+        process: {
+          pid: process.pid,
+          memory: { rss: pm.rss, heapUsed: pm.heapUsed, heapTotal: pm.heapTotal },
+          cpu
+        },
+        system: {
+          loadAvg: os.loadavg(),
+          freeMemory: os.freemem(),
+          totalMemory: os.totalmem(),
+          cpuCount: os.cpus().length
+        },
+        requests: reqMetrics.getSnapshot(),
+        routes: routeMetrics.getStats(),
+        alerts: (await (await import('../../services/Monitoring/alertService.js')).default.getActiveAlerts()) || []
+      }
+
+      return res.json(snapshot);
+    } catch (err) {
+      console.error('realtimeMetrics error', err);
+      return res.status(500).json({ error: 'failed to collect realtime metrics' });
+    }
+  }
+
+  /**
+   * Server Sent Events stream for real-time monitoring
+   * GET /monitor/stream
+   */
+  async streamMetrics(req: Request, res: Response) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+
+    let isClosed = false;
+    req.on('close', () => { isClosed = true; });
+
+    const send = async () => {
+      try {
+        // Build a lightweight payload using existing metric helpers
+        const payload: any = {
+          timestamp: new Date().toISOString(),
+          uptime: process.uptime(),
+          version: process.env.npm_package_version || '1.0.0'
+        };
+        // Attach counts from monitoring service if available
+        try {
+          // dynamic import to avoid circular deps
+          const svc = (await import('../../services/Monitoring/monitoringService.js')).default;
+          const counts = await svc.getCounts();
+          payload.counts = counts;
+        } catch (e) {
+          // ignore
+        }
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      } catch (err) {
+        console.error('SSE metrics send error', err);
+      }
+    };
+
+    // send initial ping
+    res.write(`data: ${JSON.stringify({ ok: true, ts: new Date().toISOString() })}\n\n`);
+
+    const iv = setInterval(() => {
+      if (isClosed) { clearInterval(iv); return; }
+      send();
+    }, 2000);
+  }
+
+  /**
+   * Server side rendered monitoring UI (minimal, fast)
+   * GET /monitor-ts
+   */
+  monitorPage(req: Request, res: Response) {
+    const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Monitor (TS) - Backend</title>
+<style>body{font-family:Inter,system-ui,Arial;background:#071224;color:#e6eef6;padding:18px} .card{background:#071827;padding:12px;border-radius:8px;margin-bottom:12px}</style>
+</head><body>
+<h1>Backend Monitoring (Server-rendered)</h1>
+<div class="card"><div>Uptime: <span id="uptime">-</span></div><div>Version: <span id="ver">-</span></div></div>
+<div class="card"><div>Recent Signups (1h): <span id="signups">-</span></div><div>Recent Logins (since restart): <span id="logins">-</span></div></div>
+<div class="card"><div>Health: <a href="/health">/health</a></div><div>Metrics: <a href="/metrics">/metrics</a></div></div>
+<script>
+const es = new EventSource('/monitor/stream');
+es.onmessage = e=>{ try{ const d=JSON.parse(e.data); document.getElementById('uptime').textContent = (d.uptime||'-'); document.getElementById('ver').textContent = d.version||'-'; }catch(_){} };
+setInterval(async()=>{ try{ const r=await fetch('/monitor/counts'); if(r.ok){ const j=await r.json(); document.getElementById('signups').textContent = j.recentSignups; document.getElementById('logins').textContent = j.recentLogins; } }catch(e){} },2000);
+</script>
+</body></html>`;
+    res.setHeader('Content-Type','text/html; charset=utf-8');
+    res.send(html);
+  }
+
+  /**
    * Readiness check for Kubernetes/Docker health probes
    * GET /ready
    */
