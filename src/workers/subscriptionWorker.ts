@@ -22,7 +22,7 @@ const worker = new Worker('subscription-tasks', async (job) => {
         return;
       }
       await Subscription.findByIdAndUpdate(subscriptionId, { status: 'expired' });
-      await User.findByIdAndUpdate(s.userId, { subscriptionStatus: 'expired', tier: 'free', subscriptionEndDate: s.endDate });
+      await User.findByIdAndUpdate(s.userId, { subscriptionStatus: 'expired', tier: 'free', subscriptionEndDate: s.endAt });
       console.log('Expired subscription', subscriptionId);
     } catch (err) {
       console.error('Error processing expire-subscription job', err);
@@ -43,7 +43,8 @@ const worker = new Worker('subscription-tasks', async (job) => {
       }
 
       // If no razorpay subscription id, nothing to retry
-      if (!s.razorpaySubscriptionId) {
+      const rpSubId = (s as any)?.razorpay?.subscriptionId;
+      if (!rpSubId) {
         console.warn('Retry job: no razorpay subscription id for', subscriptionId);
         return;
       }
@@ -51,7 +52,7 @@ const worker = new Worker('subscription-tasks', async (job) => {
       // Fetch latest subscription from Razorpay
       let remoteSub: any = null;
       try {
-        remoteSub = await razorpaySub.fetchSubscription(String(s.razorpaySubscriptionId));
+        remoteSub = await razorpaySub.fetchSubscription(String(rpSubId));
       } catch (fetchErr) {
         console.error('Retry job: failed to fetch razorpay subscription', fetchErr);
       }
@@ -69,7 +70,7 @@ const worker = new Worker('subscription-tasks', async (job) => {
       }
 
       // Otherwise increment retry count
-      const currentRetries = (s.billingRetries || 0) + 1;
+      const currentRetries = ((s as any).billingRetries || 0) + 1;
       await Subscription.findByIdAndUpdate(subscriptionId, { billingRetries: currentRetries, lastFailedPaymentAt: new Date() });
 
       const MAX_RETRIES = 3;

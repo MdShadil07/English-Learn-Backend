@@ -324,7 +324,8 @@ export async function subscriptionSseHandler(req: Request, res: Response) {
   try {
     // Check if user is authenticated
     if (!(req as any).user || !(req as any).user._id) {
-      return res.status(401).json({ success: false, message: 'Unauthorized' });
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
     }
     
     const userId = (req as any).user._id;
@@ -347,9 +348,13 @@ export async function subscriptionSseHandler(req: Request, res: Response) {
       redisSub.disconnect();
     });
 
+    // Keep the handler alive for SSE — return after establishing subscription
+    return;
+
   } catch (err) {
     console.error('subscriptionSseHandler error', err);
     res.status(500).end();
+    return;
   }
 }
 

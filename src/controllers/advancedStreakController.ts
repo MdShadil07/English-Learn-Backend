@@ -179,7 +179,7 @@ export const initializeUserStreak = async (
           gracePeriod: '6 hours after deadline',
           freezes: '2 per month (+ milestone bonuses)',
         },
-      }[tier],
+      }[tier as 'free' | 'pro' | 'premium'],
     });
   } catch (error) {
     console.error('❌ Error initializing streak:', error);

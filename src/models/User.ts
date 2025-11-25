@@ -9,6 +9,10 @@ export interface IUser extends Document {
   lastName?: string;
   username?: string;
   role: 'student' | 'teacher' | 'admin';
+  // Backwards-compatible, denormalized fields used across the codebase
+  tier?: 'free' | 'pro' | 'premium';
+  subscriptionStatus?: 'active' | 'expired' | 'none';
+  subscriptionEndDate?: Date | null;
   
   // Quick-access subscription snapshot
   subscription: {
@@ -45,6 +49,24 @@ const userSchema = new Schema<IUser>(
       trim: true,
       index: true,
       match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please provide a valid email'],
+    },
+    // Backwards-compatible top-level fields for quick access (many modules use these)
+    tier: {
+      type: String,
+      enum: ['free', 'pro', 'premium'],
+      default: 'free',
+      index: true,
+    },
+    subscriptionStatus: {
+      type: String,
+      enum: ['active', 'expired', 'none'],
+      default: 'none',
+      index: true,
+    },
+    subscriptionEndDate: {
+      type: Date,
+      default: null,
+      index: true,
     },
     password: {
       type: String,

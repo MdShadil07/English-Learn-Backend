@@ -18,6 +18,8 @@ export interface ISubscription extends Document {
   autoRenew: boolean;
   paymentMethod?: string;
   transactionId?: string;
+  billingRetries?: number;
+  lastFailedPaymentAt?: Date | null;
   
   razorpay: {
     subscriptionId?: string;        // razorpay subscription_id
@@ -85,6 +87,15 @@ const subscriptionSchema = new Schema<ISubscription, ISubscriptionModel>(
     autoRenew: {
       type: Boolean,
       default: false,
+    },
+    billingRetries: {
+      type: Number,
+      default: 0,
+      index: true,
+    },
+    lastFailedPaymentAt: {
+      type: Date,
+      default: null,
     },
     paymentMethod: {
       type: String,
