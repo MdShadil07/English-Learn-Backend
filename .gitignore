@@ -1,0 +1,30 @@
+# Environment variables
+.env
+.env.*
+!env.example
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+build/
+coverage/
+
+# Logs
+*.log
+logs/
+pids/
+
+# TypeScript
+*.tsbuildinfo
+
+# Uploads
+uploads/
+data/
+
+# Local only files
+*.local
