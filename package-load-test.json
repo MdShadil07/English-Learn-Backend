@@ -1,0 +1,24 @@
+{
+  "name": "english-practice-load-tests",
+  "version": "1.0.0",
+  "description": "Load testing scripts for English Practice backend",
+  "scripts": {
+    "test:load": "k6 run load-test.js",
+    "test:stress": "k6 run --stage 2m:2000 stress-test.js",
+    "test:spike": "k6 run --stage 10s:1000,1m:1000,10s:2000 spike-test.js",
+    "test:volume": "k6 run --stage 5m:5000 volume-test.js",
+    "test:smoke": "k6 run smoke-test.js",
+    "test:report": "k6 run --out json=results.json --out csv=results.csv load-test.js"
+  },
+  "devDependencies": {
+    "k6": "^0.48.0"
+  },
+  "keywords": [
+    "load-testing",
+    "performance",
+    "k6",
+    "scalability"
+  ],
+  "author": "English Practice Team",
+  "license": "MIT"
+}
