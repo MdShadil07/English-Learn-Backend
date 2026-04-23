@@ -553,40 +553,61 @@ class WebSocketService {
    * Setup Mediasoup SFU signaling handlers
    */
   private setupSFUHandlers(socket: Socket): void {
-    const userInfo = this.connectedUsers.get(socket.id);
-    if (!userInfo) return;
+    const getSocketUser = () => this.connectedUsers.get(socket.id);
+    const respond = (callback: any, payload: any): void => {
+      if (typeof callback === 'function') {
+        callback(payload);
+      }
+    };
 
     socket.on('sfu:getRouterRtpCapabilities', async (data: { roomId: string }, callback: any) => {
       try {
+        const userInfo = getSocketUser();
+        if (!userInfo) {
+          respond(callback, { error: 'Authentication required' });
+          return;
+        }
         const router = await sfuService.getOrCreateRouter(data.roomId);
-        callback({ rtpCapabilities: router.rtpCapabilities });
+        respond(callback, {
+          rtpCapabilities: JSON.parse(JSON.stringify(router.rtpCapabilities)),
+        });
       } catch (error: any) {
-        callback({ error: error.message });
+        respond(callback, { error: error.message });
       }
     });
 
     socket.on('sfu:createWebRtcTransport', async (data: { roomId: string }, callback: any) => {
       try {
+        const userInfo = getSocketUser();
+        if (!userInfo) {
+          respond(callback, { error: 'Authentication required' });
+          return;
+        }
         const transportData = await sfuService.createWebRtcTransport(data.roomId, userInfo.userId);
-        callback(transportData);
+        respond(callback, transportData);
       } catch (error: any) {
-        callback({ error: error.message });
+        respond(callback, { error: error.message });
       }
     });
 
     socket.on('sfu:connectWebRtcTransport', async (data: { roomId: string, transportId: string, dtlsParameters: any }, callback: any) => {
       try {
         await sfuService.connectTransport(data.roomId, data.transportId, data.dtlsParameters);
-        callback({ success: true });
+        respond(callback, { success: true });
       } catch (error: any) {
-        callback({ error: error.message });
+        respond(callback, { error: error.message });
       }
     });
 
     socket.on('sfu:produce', async (data: { roomId: string, transportId: string, kind: 'audio' | 'video', rtpParameters: any }, callback: any) => {
       try {
+        const userInfo = getSocketUser();
+        if (!userInfo) {
+          respond(callback, { error: 'Authentication required' });
+          return;
+        }
         const producerId = await sfuService.createProducer(data.roomId, data.transportId, data.kind, data.rtpParameters, userInfo.userId);
-        callback({ id: producerId });
+        respond(callback, { id: producerId });
 
         socket.to(roomChannel(data.roomId)).emit('sfu:new-producer', {
           producerId,
@@ -594,34 +615,34 @@ class WebSocketService {
           kind: data.kind,
         });
       } catch (error: any) {
-        callback({ error: error.message });
+        respond(callback, { error: error.message });
       }
     });
 
     socket.on('sfu:getProducers', (data: { roomId: string }, callback: any) => {
       try {
         const producers = sfuService.getProducers(data.roomId);
-        callback({ producers });
+        respond(callback, { producers });
       } catch (error: any) {
-        callback({ error: error.message });
+        respond(callback, { error: error.message });
       }
     });
 
     socket.on('sfu:consume', async (data: { roomId: string, transportId: string, producerId: string, rtpCapabilities: any }, callback: any) => {
       try {
         const consumerData = await sfuService.createConsumer(data.roomId, data.transportId, data.producerId, data.rtpCapabilities);
-        callback(consumerData);
+        respond(callback, consumerData);
       } catch (error: any) {
-        callback({ error: error.message });
+        respond(callback, { error: error.message });
       }
     });
 
     socket.on('sfu:resumeConsumer', async (data: { roomId: string, consumerId: string }, callback: any) => {
       try {
         await sfuService.resumeConsumer(data.roomId, data.consumerId);
-        callback({ success: true });
+        respond(callback, { success: true });
       } catch (error: any) {
-        callback({ error: error.message });
+        respond(callback, { error: error.message });
       }
     });
   }

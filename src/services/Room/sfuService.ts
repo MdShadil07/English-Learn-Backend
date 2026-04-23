@@ -14,9 +14,10 @@ export class SFUService {
   private workers: Worker[] = [];
   private nextWorkerIndex = 0;
   private rooms: Map<string, RoomState> = new Map();
+  private workersReady: Promise<void>;
 
   constructor() {
-    this.initializeWorkers();
+    this.workersReady = this.initializeWorkers();
   }
 
   private async initializeWorkers() {
@@ -33,16 +34,25 @@ export class SFUService {
     }
   }
 
-  private getNextWorker(): Worker {
+  private async getNextWorker(): Promise<Worker> {
+    await this.workersReady;
+
+    if (this.workers.length === 0) {
+      throw new Error('Mediasoup workers are not available');
+    }
+
     const worker = this.workers[this.nextWorkerIndex];
     this.nextWorkerIndex = (this.nextWorkerIndex + 1) % this.workers.length;
     return worker;
   }
 
   public async getOrCreateRouter(roomId: string): Promise<Router> {
+    await this.workersReady;
+
     let room = this.rooms.get(roomId);
     if (!room) {
-      const router = await this.getNextWorker().createRouter(mediasoupConfig.router);
+      const worker = await this.getNextWorker();
+      const router = await worker.createRouter(mediasoupConfig.router);
       room = {
         router,
         transports: new Map(),
