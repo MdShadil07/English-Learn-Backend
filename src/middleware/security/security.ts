@@ -9,26 +9,38 @@ import { Request, Response, NextFunction } from 'express';
 // CORS configuration
 export const corsOptions: cors.CorsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
+    // Allow requests with no origin (mobile apps, curl, server-to-server)
     if (!origin) return callback(null, true);
 
-    const allowedOrigins = [
+    // Base always-allowed dev origins
+    const baseOrigins = [
       'http://localhost:3000',
       'http://localhost:3001',
+      'http://localhost:8080',
       'http://localhost:8081',
       'http://localhost:5173',
       'http://127.0.0.1:3000',
       'http://127.0.0.1:3001',
+      'http://127.0.0.1:8080',
       'http://127.0.0.1:8081',
       'http://127.0.0.1:5173',
-      process.env.FRONTEND_URL,
-      process.env.CLIENT_URL
-    ].filter(Boolean);
+    ];
 
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    // Dynamically extend from env — supports multiple comma-separated URLs
+    // e.g. ALLOWED_ORIGINS=https://cognitospeak.vercel.app,https://www.cognitospeak.com
+    const envOrigins = [
+      process.env.FRONTEND_URL,
+      process.env.CLIENT_URL,
+      ...(process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()) ?? []),
+    ].filter(Boolean) as string[];
+
+    const allowedOrigins = [...new Set([...baseOrigins, ...envOrigins])];
+
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      console.warn(`[CORS] Blocked origin: ${origin}`);
+      callback(new Error(`Origin ${origin} not allowed by CORS`));
     }
   },
   credentials: true,

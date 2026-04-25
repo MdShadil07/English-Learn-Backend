@@ -3,6 +3,7 @@ import mongoose, { Schema, Document, Model } from 'mongoose';
 export interface IRoom extends Document {
   _id: mongoose.Types.ObjectId;
   roomId: string; // Unique room identifier
+  roomCode?: string; // 6-char uppercase code for private rooms
   topic: string; // Room topic/title
   description?: string; // Room description
   hostId: mongoose.Types.ObjectId; // User who created the room
@@ -33,6 +34,13 @@ const roomSchema = new Schema<IRoom, IRoomModel>(
       unique: true,
       trim: true,
       index: true,
+    },
+    roomCode: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      index: true,
+      sparse: true, // Only indexed when present (private rooms)
     },
     topic: {
       type: String,

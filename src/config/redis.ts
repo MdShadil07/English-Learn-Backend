@@ -95,15 +95,19 @@ class RedisCache implements CacheConfig {
     }
   }
 
-  async set(key: string, value: string, ttl?: number): Promise<void> {
+  async set(key: string, value: string, ttl?: number | null): Promise<void> {
     try {
       if (!this.client || !this.isConnected()) {
         return;
       }
-      const expiry = ttl ?? this.DEFAULT_TTL;
-      await this.client.setex(key, expiry, value);
+
+      if (ttl === null || typeof ttl === 'undefined') {
+        await this.client.set(key, value);
+      } else {
+        await this.client.setex(key, ttl, value);
+      }
     } catch (error) {
-      console.error('❌ Redis SETEX error:', error);
+      console.error('❌ Redis SET error:', error);
     }
   }
 

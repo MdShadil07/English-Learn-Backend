@@ -17,7 +17,6 @@ import {
 import { logSocketError, logSocketInfo } from './utils/errorHandler.js';
 import { validateRoomJoinPayload, validateRoomMessagePayload, validateUserId } from './utils/validateRoom.js';
 import { distributedRoomStateService } from '../Room/distributedRoomStateService.js';
-import { sfuService } from '../Room/sfuService.js';
 
 interface SocketUser {
   userId: string;
@@ -138,9 +137,6 @@ class WebSocketService {
 
       // Room event handlers
       this.setupRoomEventHandlers(socket);
-
-      // SFU Mediasoup signaling handlers
-      this.setupSFUHandlers(socket);
 
       // Handle disconnection
       socket.on('disconnect', (reason: string) => {
@@ -277,9 +273,6 @@ class WebSocketService {
             reason: 'disconnected',
             timestamp: new Date().toISOString(),
           });
-
-          // Cleanup SFU resources
-          sfuService.removeUser(roomId, userInfo.userId);
         }
       }
 
@@ -548,105 +541,6 @@ class WebSocketService {
       this.handleWebRTCConnectionQuality(socket, data);
     });
   }
-
-  /**
-   * Setup Mediasoup SFU signaling handlers
-   */
-  private setupSFUHandlers(socket: Socket): void {
-    const getSocketUser = () => this.connectedUsers.get(socket.id);
-    const respond = (callback: any, payload: any): void => {
-      if (typeof callback === 'function') {
-        callback(payload);
-      }
-    };
-
-    socket.on('sfu:getRouterRtpCapabilities', async (data: { roomId: string }, callback: any) => {
-      try {
-        const userInfo = getSocketUser();
-        if (!userInfo) {
-          respond(callback, { error: 'Authentication required' });
-          return;
-        }
-        const router = await sfuService.getOrCreateRouter(data.roomId);
-        respond(callback, {
-          rtpCapabilities: JSON.parse(JSON.stringify(router.rtpCapabilities)),
-        });
-      } catch (error: any) {
-        respond(callback, { error: error.message });
-      }
-    });
-
-    socket.on('sfu:createWebRtcTransport', async (data: { roomId: string }, callback: any) => {
-      try {
-        const userInfo = getSocketUser();
-        if (!userInfo) {
-          respond(callback, { error: 'Authentication required' });
-          return;
-        }
-        const transportData = await sfuService.createWebRtcTransport(data.roomId, userInfo.userId);
-        respond(callback, transportData);
-      } catch (error: any) {
-        respond(callback, { error: error.message });
-      }
-    });
-
-    socket.on('sfu:connectWebRtcTransport', async (data: { roomId: string, transportId: string, dtlsParameters: any }, callback: any) => {
-      try {
-        await sfuService.connectTransport(data.roomId, data.transportId, data.dtlsParameters);
-        respond(callback, { success: true });
-      } catch (error: any) {
-        respond(callback, { error: error.message });
-      }
-    });
-
-    socket.on('sfu:produce', async (data: { roomId: string, transportId: string, kind: 'audio' | 'video', rtpParameters: any }, callback: any) => {
-      try {
-        const userInfo = getSocketUser();
-        if (!userInfo) {
-          respond(callback, { error: 'Authentication required' });
-          return;
-        }
-        const producerId = await sfuService.createProducer(data.roomId, data.transportId, data.kind, data.rtpParameters, userInfo.userId);
-        respond(callback, { id: producerId });
-
-        socket.to(roomChannel(data.roomId)).emit('sfu:new-producer', {
-          producerId,
-          producerUserId: userInfo.userId,
-          kind: data.kind,
-        });
-      } catch (error: any) {
-        respond(callback, { error: error.message });
-      }
-    });
-
-    socket.on('sfu:getProducers', (data: { roomId: string }, callback: any) => {
-      try {
-        const producers = sfuService.getProducers(data.roomId);
-        respond(callback, { producers });
-      } catch (error: any) {
-        respond(callback, { error: error.message });
-      }
-    });
-
-    socket.on('sfu:consume', async (data: { roomId: string, transportId: string, producerId: string, rtpCapabilities: any }, callback: any) => {
-      try {
-        const consumerData = await sfuService.createConsumer(data.roomId, data.transportId, data.producerId, data.rtpCapabilities);
-        respond(callback, consumerData);
-      } catch (error: any) {
-        respond(callback, { error: error.message });
-      }
-    });
-
-    socket.on('sfu:resumeConsumer', async (data: { roomId: string, consumerId: string }, callback: any) => {
-      try {
-        await sfuService.resumeConsumer(data.roomId, data.consumerId);
-        respond(callback, { success: true });
-      } catch (error: any) {
-        respond(callback, { error: error.message });
-      }
-    });
-  }
-
 
   /**
    * Handle room join via socket

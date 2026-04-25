@@ -36,10 +36,12 @@ export class RoomController {
         isPrivate: isPrivate || false,
       });
 
+      const sfuUrl = process.env.SFU_URL || 'http://localhost:3001';
+
       return res.status(201).json({
         success: true,
         message: 'Room created successfully',
-        data: room,
+        data: { ...room, sfuUrl },
       });
     } catch (error) {
       console.error('Create room error:', error);
@@ -64,25 +66,32 @@ export class RoomController {
       }
 
       const { roomId } = req.params;
+      const { roomCode } = req.body; // Optional: required for private rooms
 
-      const room = await roomService.joinRoom(roomId, req.user._id);
+      const room = await roomService.joinRoom(roomId, req.user._id, roomCode);
+
+      const sfuUrl = process.env.SFU_URL || 'http://localhost:3001';
 
       return res.json({
         success: true,
         message: 'Joined room successfully',
-        data: room,
+        data: { ...room, sfuUrl },
       });
     } catch (error) {
       console.error('Join room error:', error);
 
-      const statusCode = error instanceof Error && error.message.includes('Invalid') ? 400 :
-                        error instanceof Error && error.message.includes('not found') ? 404 :
-                        error instanceof Error && error.message.includes('full') ? 409 :
-                        error instanceof Error && error.message.includes('already in') ? 409 : 500;
+      const msg = error instanceof Error ? error.message : '';
+      const statusCode =
+        msg === 'PRIVATE_ROOM_CODE_REQUIRED' ? 403 :
+        msg === 'INVALID_ROOM_CODE' ? 403 :
+        msg.includes('Invalid') ? 400 :
+        msg.includes('not found') ? 404 :
+        msg.includes('full') ? 409 : 500;
 
       return res.status(statusCode).json({
         success: false,
-        message: error instanceof Error ? error.message : 'Failed to join room',
+        message: msg || 'Failed to join room',
+        code: msg === 'PRIVATE_ROOM_CODE_REQUIRED' || msg === 'INVALID_ROOM_CODE' ? msg : undefined,
       });
     }
   }
@@ -131,9 +140,11 @@ export class RoomController {
     try {
       const rooms = await roomService.getActiveRooms();
 
+      const sfuUrl = process.env.SFU_URL || 'http://localhost:3001';
+      
       return res.json({
         success: true,
-        data: rooms,
+        data: rooms.map(room => ({ ...room, sfuUrl })),
       });
     } catch (error) {
       console.error('Get active rooms error:', error);
@@ -168,9 +179,11 @@ export class RoomController {
         });
       }
 
+      const sfuUrl = process.env.SFU_URL || 'http://localhost:3001';
+
       return res.json({
         success: true,
-        data: room,
+        data: { ...room, sfuUrl },
       });
     } catch (error) {
       console.error('Get room details error:', error);
