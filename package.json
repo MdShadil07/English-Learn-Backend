@@ -12,7 +12,9 @@
     "lint:fix": "eslint src/**/*.ts --fix",
     "test": "npm run build && node --experimental-vm-modules ./node_modules/jest/bin/jest --config jest.dist.config.cjs --runInBand",
     "test:dist": "npm run build && node --experimental-vm-modules ./node_modules/jest/bin/jest --config jest.dist.config.cjs --runInBand",
-    "preflight:prod": "node scripts/preflightProduction.mjs"
+    "preflight:prod": "node scripts/preflightProduction.mjs",
+    "install:sharp": "npm install --os=linux --cpu=x64 sharp",
+    "postinstall": "npm run install:sharp"
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",
