@@ -1,4 +1,4 @@
-import { WorkerSettings, RouterOptions, WebRtcTransportOptions } from 'mediasoup/types';
+import type { WorkerSettings, RouterOptions, WebRtcTransportOptions } from 'mediasoup';
 import os from 'os';
 
 export const mediasoupConfig = {
