@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { roomController } from '../../controllers/Room/roomController.js';
 import { authenticate } from '../../middleware/auth/auth.js';
+import { bannerUpload } from '../../middleware/upload/upload.js';
 
 const router = Router();
 
@@ -20,6 +21,13 @@ router.use(authenticate);
  * @access Private
  */
 router.post('/', roomController.createRoom.bind(roomController));
+
+/**
+ * @route POST /api/rooms/upload-banner
+ * @desc Upload room banner
+ * @access Private
+ */
+router.post('/upload-banner', bannerUpload.single('banner'), roomController.uploadBanner.bind(roomController));
 
 /**
  * @route GET /api/rooms/:roomId

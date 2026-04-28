@@ -33,3 +33,6 @@ export type { IEvent, IEventModel } from './Event.js';
 
 export { default as Room } from './Room.js';
 export type { IRoom, IRoomModel } from './Room.js';
+
+export { default as RoomParticipant } from './RoomParticipant.js';
+export type { IRoomParticipant } from './RoomParticipant.js';

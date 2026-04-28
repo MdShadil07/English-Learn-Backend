@@ -1,8 +1,10 @@
 import { Request, Response } from 'express';
 import { roomService } from '../../services/Room/roomService.js';
+import { roomBannerUploadService } from '../../services/Room/roomBannerUploadService.js';
 
 interface AuthRequest extends Request {
   user?: any;
+  file?: Express.Multer.File;
 }
 
 export class RoomController {
@@ -19,7 +21,10 @@ export class RoomController {
         });
       }
 
-      const { topic, description, maxParticipants, isPrivate } = req.body;
+      const { 
+        topic, description, maxParticipants, isPrivate, banner,
+        bannerText, bannerFontFamily, bannerIsBold, bannerIsItalic, bannerFontSize 
+      } = req.body;
 
       if (!topic || typeof topic !== 'string' || topic.trim().length === 0) {
         return res.status(400).json({
@@ -32,6 +37,12 @@ export class RoomController {
         hostId: req.user._id,
         topic: topic.trim(),
         description: description?.trim(),
+        banner: banner?.trim(),
+        bannerText: bannerText !== undefined ? bannerText : undefined,
+        bannerFontFamily: bannerFontFamily?.trim(),
+        bannerIsBold,
+        bannerIsItalic,
+        bannerFontSize,
         maxParticipants,
         isPrivate: isPrivate || false,
       });
@@ -48,6 +59,42 @@ export class RoomController {
       return res.status(500).json({
         success: false,
         message: error instanceof Error ? error.message : 'Failed to create room',
+      });
+    }
+  }
+
+  /**
+   * Upload practice room banner
+   * POST /api/rooms/upload-banner
+   */
+  async uploadBanner(req: AuthRequest, res: Response) {
+    try {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          message: 'Authentication required',
+        });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: 'No banner file provided',
+        });
+      }
+
+      const bannerUrl = await roomBannerUploadService.uploadBanner(req.file, req.user._id);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Banner uploaded successfully',
+        data: { bannerUrl },
+      });
+    } catch (error) {
+      console.error('Upload banner error:', error);
+      return res.status(500).json({
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to upload banner',
       });
     }
   }
@@ -169,8 +216,7 @@ export class RoomController {
       }
 
       const { roomId } = req.params;
-
-      const room = await roomService.getRoomDetails(roomId);
+      const room = await roomService.getRoomDetails(roomId, req.user._id.toString());
 
       if (!room) {
         return res.status(404).json({

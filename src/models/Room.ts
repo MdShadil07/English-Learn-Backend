@@ -6,24 +6,29 @@ export interface IRoom extends Document {
   roomCode?: string; // 6-char uppercase code for private rooms
   topic: string; // Room topic/title
   description?: string; // Room description
+  banner?: string; // Room visual banner/gradient
+  bannerText?: string;
+  bannerFontFamily?: string;
+  bannerIsBold?: boolean;
+  bannerIsItalic?: boolean;
+  bannerFontSize?: number;
   hostId: mongoose.Types.ObjectId; // User who created the room
-  participants: mongoose.Types.ObjectId[]; // Array of participant user IDs
   maxParticipants: number; // Maximum number of participants (default: 500)
   isPrivate: boolean; // Whether the room is private
+  isLocked: boolean; // Whether the room is locked by the host
+  blockedUsers: mongoose.Types.ObjectId[]; // Array of blocked user IDs
+  moderators: mongoose.Types.ObjectId[]; // Array of moderator user IDs
   status: 'active' | 'closed'; // Room status
   createdAt: Date;
   updatedAt: Date;
-  isFull(): boolean;
-  hasParticipant(userId: mongoose.Types.ObjectId): boolean;
-  addParticipant(userId: mongoose.Types.ObjectId): boolean;
-  removeParticipant(userId: mongoose.Types.ObjectId): boolean;
+  isBlocked(userId: mongoose.Types.ObjectId): boolean;
+  isModerator(userId: mongoose.Types.ObjectId): boolean;
 }
 
 export interface IRoomModel extends Model<IRoom> {
   findByRoomId(roomId: string): Promise<IRoom | null>;
   findActiveRooms(): Promise<IRoom[]>;
   findRoomsByHost(hostId: mongoose.Types.ObjectId): Promise<IRoom[]>;
-  findRoomsByParticipant(userId: mongoose.Types.ObjectId): Promise<IRoom[]>;
 }
 
 const roomSchema = new Schema<IRoom, IRoomModel>(
@@ -53,17 +58,39 @@ const roomSchema = new Schema<IRoom, IRoomModel>(
       trim: true,
       maxlength: [500, 'Description cannot exceed 500 characters'],
     },
+    banner: {
+      type: String,
+      trim: true,
+      default: 'from-emerald-400 to-teal-600',
+    },
+    bannerText: {
+      type: String,
+      trim: true,
+      default: 'English Practice Room'
+    },
+    bannerFontFamily: {
+      type: String,
+      trim: true,
+      default: 'system-ui, -apple-system, sans-serif'
+    },
+    bannerIsBold: {
+      type: Boolean,
+      default: true
+    },
+    bannerIsItalic: {
+      type: Boolean,
+      default: false
+    },
+    bannerFontSize: {
+      type: Number,
+      default: 24
+    },
     hostId: {
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: [true, 'Host ID is required'],
       index: true,
     },
-    participants: [{
-      type: Schema.Types.ObjectId,
-      ref: 'User',
-      default: [],
-    }],
     maxParticipants: {
       type: Number,
       default: 500,
@@ -74,6 +101,20 @@ const roomSchema = new Schema<IRoom, IRoomModel>(
       type: Boolean,
       default: false,
     },
+    isLocked: {
+      type: Boolean,
+      default: false,
+    },
+    blockedUsers: [{
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      default: [],
+    }],
+    moderators: [{
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      default: [],
+    }],
     status: {
       type: String,
       enum: ['active', 'closed'],
@@ -89,7 +130,8 @@ const roomSchema = new Schema<IRoom, IRoomModel>(
 // Indexes for performance
 roomSchema.index({ createdAt: -1 });
 roomSchema.index({ hostId: 1, status: 1 });
-roomSchema.index({ participants: 1 });
+roomSchema.index({ blockedUsers: 1 });
+roomSchema.index({ moderators: 1 });
 
 // Static methods
 roomSchema.statics.findByRoomId = function (roomId: string) {
@@ -104,37 +146,13 @@ roomSchema.statics.findRoomsByHost = function (hostId: mongoose.Types.ObjectId) 
   return this.find({ hostId, status: 'active' }).sort({ createdAt: -1 });
 };
 
-roomSchema.statics.findRoomsByParticipant = function (userId: mongoose.Types.ObjectId) {
-  return this.find({
-    participants: userId,
-    status: 'active'
-  }).sort({ createdAt: -1 });
-};
-
 // Instance methods
-roomSchema.methods.isFull = function (): boolean {
-  return this.participants.length >= this.maxParticipants;
+roomSchema.methods.isBlocked = function (userId: mongoose.Types.ObjectId): boolean {
+  return this.blockedUsers.some((id: mongoose.Types.ObjectId) => id.equals(userId));
 };
 
-roomSchema.methods.hasParticipant = function (userId: mongoose.Types.ObjectId): boolean {
-  return this.participants.some((id: mongoose.Types.ObjectId) => id.equals(userId));
-};
-
-roomSchema.methods.addParticipant = function (userId: mongoose.Types.ObjectId): boolean {
-  if (this.isFull() || this.hasParticipant(userId)) {
-    return false;
-  }
-  this.participants.push(userId);
-  return true;
-};
-
-roomSchema.methods.removeParticipant = function (userId: mongoose.Types.ObjectId): boolean {
-  const index = this.participants.findIndex((id: mongoose.Types.ObjectId) => id.equals(userId));
-  if (index === -1) {
-    return false;
-  }
-  this.participants.splice(index, 1);
-  return true;
+roomSchema.methods.isModerator = function (userId: mongoose.Types.ObjectId): boolean {
+  return this.moderators.some((id: mongoose.Types.ObjectId) => id.equals(userId));
 };
 
 const Room: IRoomModel = mongoose.model<IRoom, IRoomModel>('Room', roomSchema);

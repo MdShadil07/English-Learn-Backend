@@ -25,6 +25,7 @@ export const FILE_SIZE_LIMITS = {
   IMAGE: 5 * 1024 * 1024, // 5MB
   DOCUMENT: 10 * 1024 * 1024, // 10MB
   AVATAR: 2 * 1024 * 1024, // 2MB
+  BANNER: 5 * 1024 * 1024, // 5MB
 };
 
 // Generate unique filename
@@ -64,6 +65,19 @@ export const avatarFileFilter = (req: Request, file: Express.Multer.File, cb: mu
     cb(null, true);
   } else {
     cb(new Error('Only image files (JPEG, PNG, WebP, GIF) are allowed for avatars'));
+  }
+};
+
+// File filter for banners
+export const bannerFileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+  if (ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
+    if (file.size > FILE_SIZE_LIMITS.BANNER) {
+      cb(new Error('Banner file size must be less than 5MB'));
+      return;
+    }
+    cb(null, true);
+  } else {
+    cb(new Error('Only image files (JPEG, PNG, WebP) are allowed for banners'));
   }
 };
 
@@ -127,6 +141,16 @@ export const avatarUpload = multer({
   },
   limits: {
     fileSize: FILE_SIZE_LIMITS.AVATAR,
+    files: 1
+  }
+});
+
+// Banner upload middleware
+export const bannerUpload = multer({
+  storage: memoryStorage,
+  fileFilter: bannerFileFilter,
+  limits: {
+    fileSize: FILE_SIZE_LIMITS.BANNER,
     files: 1
   }
 });
