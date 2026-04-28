@@ -1,0 +1,13 @@
+src/services/Room/roomService.ts(325,7): error TS2353: Object literal may only specify known properties, and 'moderators' does not exist in type 'RoomDetails'.
+src/services/WebSocket/socketService.ts(302,27): error TS2339: Property 'userSockets' does not exist on type 'WebSocketService'.
+src/services/WebSocket/socketService.ts(645,33): error TS2339: Property 'userSockets' does not exist on type 'WebSocketService'.
+src/services/WebSocket/socketService.ts(675,33): error TS2339: Property 'userSockets' does not exist on type 'WebSocketService'.
+src/services/WebSocket/socketService.ts(735,10): error TS2304: Cannot find name 'userInfo'.
+src/services/WebSocket/socketService.ts(749,10): error TS2304: Cannot find name 'userInfo'.
+src/services/WebSocket/socketService.ts(1101,17): error TS2339: Property 'connectedUsers' does not exist on type 'WebSocketService'.
+src/services/WebSocket/socketService.ts(1107,42): error TS2304: Cannot find name 'SocketUser'.
+src/services/WebSocket/socketService.ts(1108,28): error TS2339: Property 'connectedUsers' does not exist on type 'WebSocketService'.
+src/services/WebSocket/socketService.ts(1108,66): error TS18046: 'user' is of type 'unknown'.
+src/services/WebSocket/socketService.ts(1115,17): error TS2339: Property 'userSockets' does not exist on type 'WebSocketService'.
+src/services/WebSocket/socketService.ts(1174,12): error TS2339: Property 'connectedUsers' does not exist on type 'WebSocketService'.
+src/services/WebSocket/socketService.ts(1175,12): error TS2339: Property 'userSockets' does not exist on type 'WebSocketService'.
