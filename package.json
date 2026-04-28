@@ -12,9 +12,7 @@
     "lint:fix": "eslint src/**/*.ts --fix",
     "test": "npm run build && node --experimental-vm-modules ./node_modules/jest/bin/jest --config jest.dist.config.cjs --runInBand",
     "test:dist": "npm run build && node --experimental-vm-modules ./node_modules/jest/bin/jest --config jest.dist.config.cjs --runInBand",
-    "preflight:prod": "node scripts/preflightProduction.mjs",
-    "install:sharp": "npm install --os=linux --cpu=x64 sharp",
-    "postinstall": "npm run install:sharp"
+    "preflight:prod": "node scripts/preflightProduction.mjs"
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",
@@ -53,8 +51,7 @@
     "pino-pretty": "^13.1.2",
     "razorpay": "^2.8.3",
     "redis": "^5.9.0",
-    "sbd": "^1.0.19",
-    "sharp": "^0.33.5",
+    "sbd": "1.0.19",
     "socket.io": "^4.8.1",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
@@ -100,5 +97,11 @@
     "authentication"
   ],
   "author": "English Practice Team",
-  "license": "MIT"
+  "license": "MIT",
+  "optionalDependencies": {
+    "sharp": "^0.33.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
 }
