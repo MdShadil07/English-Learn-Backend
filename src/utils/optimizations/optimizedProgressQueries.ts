@@ -3,6 +3,7 @@
  * Enhanced queries with indexes, projections, and lean() for performance
  */
 
+import type mongoose from 'mongoose';
 import Progress from '../../models/Progress.js';
 import { redisCache } from '../../config/redis.js';
 import { logger } from '../../utils/calculators/core/logger.js';
@@ -402,7 +403,7 @@ export class OptimizedProgressQueries {
   /**
    * Batch update multiple users' progress (for background jobs)
    */
-  static async batchUpdateProgress(updates: Array<{ userId: string; updates: any }>) {
+  static async batchUpdateProgress(updates: Array<{ userId: string; updates: any }>): Promise<mongoose.mongo.BulkWriteResult> {
     try {
       const operations = updates.map(({ userId, updates }) => ({
         updateOne: {

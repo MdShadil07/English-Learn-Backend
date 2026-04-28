@@ -256,10 +256,13 @@ class CloudStorageService {
         }
 
         const file = data[0];
+        const lastModifiedTimestamp = file.updated_at ?? file.created_at ?? new Date().toISOString();
+        const createdTimestamp = file.created_at ?? file.updated_at ?? new Date().toISOString();
+
         return {
           size: file.metadata?.size || 0,
-          lastModified: new Date(file.updated_at || file.created_at),
-          created: new Date(file.created_at)
+          lastModified: new Date(lastModifiedTimestamp),
+          created: new Date(createdTimestamp)
         };
       }
 
