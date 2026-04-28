@@ -1,5 +1,12 @@
 import * as mediasoup from 'mediasoup';
-import type { Worker, Router, WebRtcTransport, Producer, Consumer, RtpCapabilities } from 'mediasoup';
+import type {
+  Worker,
+  Router,
+  WebRtcTransport,
+  Producer,
+  Consumer,
+  RtpCapabilities
+} from 'mediasoup/types';
 import { mediasoupConfig } from '../../config/mediasoup.js';
 
 interface RoomState {
