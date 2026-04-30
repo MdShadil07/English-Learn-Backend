@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { resolve4 } from 'dns/promises';
 
 interface EmailOptions {
   to: string;
@@ -10,7 +11,7 @@ interface EmailOptions {
 }
 
 // Create nodemailer transporter with production-ready configuration
-const createTransporter = () => {
+const createTransporter = async () => {
   // Check if SMTP configuration is available
   const smtpHost = process.env.SMTP_HOST;
   const smtpPort = process.env.SMTP_PORT;
@@ -19,7 +20,8 @@ const createTransporter = () => {
 
   if (smtpHost && smtpPort && smtpUser && smtpPass) {
     // Use configured SMTP server with production settings
-    return nodemailer.createTransport({
+    // Force IPv4 by resolving hostname to IPv4 address
+    const transportConfig: any = {
       host: smtpHost,
       port: parseInt(smtpPort),
       secure: parseInt(smtpPort) === 465, // true for 465, false for other ports
@@ -36,7 +38,20 @@ const createTransporter = () => {
       tls: {
         rejectUnauthorized: process.env.NODE_ENV === 'production', // Only verify in production
       },
-    });
+    };
+
+    // Try to resolve hostname to IPv4 to avoid IPv6 issues
+    try {
+      const addresses = await resolve4(smtpHost);
+      if (addresses && addresses.length > 0) {
+        transportConfig.host = addresses[0]; // Use first IPv4 address
+        console.log(`📧 Resolved ${smtpHost} to IPv4: ${addresses[0]}`);
+      }
+    } catch (error) {
+      console.warn(`⚠️ Could not resolve ${smtpHost} to IPv4, using hostname directly`);
+    }
+
+    return nodemailer.createTransport(transportConfig);
   } else {
     // Fallback to Ethereal Email for testing (creates a test account)
     console.log('⚠️  SMTP not configured, using Ethereal Email for testing');
@@ -56,9 +71,9 @@ let transporter: nodemailer.Transporter | null = null;
 // Email service for development and production
 export async function sendEmail(options: EmailOptions): Promise<void> {
   try {
-    // Initialize transporter if not already done
+    // Initialize transporter if not already done (now async)
     if (!transporter) {
-      transporter = createTransporter();
+      transporter = await createTransporter();
     }
 
     // Generate HTML content based on template
