@@ -10,6 +10,23 @@ export interface IUser extends Document {
   username?: string;
   role: 'student' | 'teacher' | 'admin';
   
+  // OAuth authentication fields
+  googleAuth?: {
+    googleId: string;
+    accessToken?: string;
+    refreshToken?: string;
+    email: string;
+    profilePicture?: string;
+    // Account linking status
+    isLinked: boolean;
+    linkedAt?: Date;
+    linkedBy?: 'manual' | 'sso_first_time' | 'email_verification';
+  };
+  
+  // Email verification
+  isEmailVerified: boolean;
+  lastLoginAt?: Date;
+  
   // Quick-access subscription snapshot
   subscription: {
     planCode: string;               // "FREE", "PRO", "PREMIUM"
@@ -46,12 +63,14 @@ const userSchema = new Schema<IUser>(
       unique: true,
       lowercase: true,
       trim: true,
-      index: true,
       match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please provide a valid email'],
     },
     password: {
       type: String,
-      required: [true, 'Password is required'],
+      required: function(this: IUser) {
+        // Password is optional for OAuth users
+        return !this.googleAuth?.googleId;
+      },
       minlength: [8, 'Password must be at least 8 characters long'],
       select: false, // Don't include password in queries by default
     },
@@ -60,14 +79,12 @@ const userSchema = new Schema<IUser>(
       required: [true, 'First name is required'],
       trim: true,
       maxlength: [50, 'First name cannot exceed 50 characters'],
-      index: true,
     },
     lastName: {
       type: String,
       required: false,
       trim: true,
       maxlength: [50, 'Last name cannot exceed 50 characters'],
-      index: true,
     },
     username: {
       type: String,
@@ -78,14 +95,56 @@ const userSchema = new Schema<IUser>(
       minlength: [3, 'Username must be at least 3 characters long'],
       maxlength: [30, 'Username cannot exceed 30 characters'],
       match: [/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores'],
-      index: true,
     },
     role: {
       type: String,
       enum: ['student', 'teacher', 'admin'],
       default: 'student',
       required: [true, 'Role is required'],
+    },
+    // OAuth authentication fields
+    googleAuth: {
+      googleId: {
+        type: String,
+        sparse: true,
+      },
+      accessToken: {
+        type: String,
+        select: false, // Don't include in queries by default
+      },
+      refreshToken: {
+        type: String,
+        select: false, // Don't include in queries by default
+      },
+      email: {
+        type: String,
+      },
+      profilePicture: {
+        type: String,
+      },
+      // Account linking status
+      isLinked: {
+        type: Boolean,
+        default: false,
+      },
+      linkedAt: {
+        type: Date,
+        default: null,
+      },
+      linkedBy: {
+        type: String, // 'manual' | 'sso_first_time' | 'email_verification'
+        default: null,
+      },
+    },
+    // Email verification
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
       index: true,
+    },
+    lastLoginAt: {
+      type: Date,
+      default: null,
     },
     // Denormalized subscription fields stored inside user for fast access
     subscription: {
@@ -126,6 +185,34 @@ const userSchema = new Schema<IUser>(
 userSchema.index({ createdAt: -1 });
 userSchema.index({ 'subscription.status': 1 });
 userSchema.index({ 'subscription.expiresAt': 1 });
+userSchema.index({ 'googleAuth.googleId': 1 });
+
+// Compound indexes for common query patterns (Phase 1 scalability)
+userSchema.index({ 
+  'subscription.status': 1, 
+  'subscription.expiresAt': 1 
+});
+userSchema.index({ 
+  isEmailVerified: 1, 
+  createdAt: -1 
+});
+userSchema.index({ 
+  role: 1, 
+  createdAt: -1 
+});
+userSchema.index({ 
+  'googleAuth.isLinked': 1, 
+  'googleAuth.linkedAt': -1 
+});
+
+// TTL index for cleanup of unverified accounts (30 days)
+userSchema.index(
+  { createdAt: 1 },
+  {
+    expireAfterSeconds: 2592000, // 30 days
+    partialFilterExpression: { isEmailVerified: false }
+  }
+);
 
 // Virtuals
 userSchema.virtual('fullName').get(function (this: IUser) {

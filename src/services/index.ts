@@ -25,8 +25,10 @@ export * from './Gamification/index.js';
 export * from './Progress/index.js';
 
 // Profile Services (User Management)
-
 export * from './Profile/index.js';
+
+// Auth Services (Authentication & OAuth)
+export * from './Auth/index.js';
 
 // AI Chat Services (Gemini AI)
 export * from './Ai Chat/geminiService.js';

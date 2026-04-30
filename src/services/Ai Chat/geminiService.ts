@@ -979,7 +979,7 @@ Safe Topics for First Conversations:
 ✗ Money ✗ Politics ✗ Religion ✗ Age ✗ Weight`
     };
 
-    let prompt = `You are ${personality.name}, an AI English tutor.
+    const prompt = `You are ${personality.name}, an AI English tutor.
 
 TIER: ${personality.tier.toUpperCase()}
 ${tierGuidance[personality.tier]}

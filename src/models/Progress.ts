@@ -1174,7 +1174,7 @@ progressSchema.methods.addXP = async function (
   
   // ✅ Use Gamification service to calculate level from total XP (single source of truth)
   const newLevel = getLevelFromXP(this.totalXP, this.prestigeLevel);
-  let leveledUp = newLevel > oldLevel;
+  const leveledUp = newLevel > oldLevel;
   
   const rewards: any = {
     badges: [],

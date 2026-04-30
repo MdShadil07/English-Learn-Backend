@@ -18,7 +18,7 @@ export async function getOrtSession(modelPath: string, options?: Partial<{
   // Use a dynamic import via Function to avoid TypeScript/static module
   // resolution errors when the optional native package isn't installed.
   const dynamicImport: (m: string) => Promise<any> = (m: string) => {
-    // eslint-disable-next-line no-new-func
+     
     return (new Function('m', 'return import(m);') as any)(m);
   };
 

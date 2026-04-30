@@ -31,7 +31,7 @@ class AiChatSettingsService {
       const userObjectId = new mongoose.Types.ObjectId(userId);
       
       // Get or create settings
-      let settings = await AiChatSettings.getOrCreateSettings(userObjectId);
+      const settings = await AiChatSettings.getOrCreateSettings(userObjectId);
       
       // Update language
       settings.responseLanguage = language;
@@ -59,7 +59,7 @@ class AiChatSettingsService {
       const userObjectId = new mongoose.Types.ObjectId(userId);
       
       // Get or create settings
-      let settings = await AiChatSettings.getOrCreateSettings(userObjectId);
+      const settings = await AiChatSettings.getOrCreateSettings(userObjectId);
       
       // Update fields
       if (updates.responseLanguage !== undefined) {

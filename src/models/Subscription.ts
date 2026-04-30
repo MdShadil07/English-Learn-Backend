@@ -49,13 +49,11 @@ const subscriptionSchema = new Schema<ISubscription, ISubscriptionModel>(
       type: Schema.Types.ObjectId,
       ref: 'SubscriptionPlan',
       required: [true, 'Plan ID is required'],
-      index: true,
     },
     tier: {
       type: String,
       enum: ['free', 'pro', 'premium'],
       required: [true, 'Tier is required'],
-      index: true,
     },
     planType: {
       type: String,
@@ -120,7 +118,8 @@ subscriptionSchema.virtual('razorpaySubscriptionId').get(function (this: ISubscr
 });
 
 // Indexes
-subscriptionSchema.index({ userId: 1, status: 1 });
+subscriptionSchema.index({ userId: 1 });
+subscriptionSchema.index({ status: 1 });
 subscriptionSchema.index({ endAt: 1 });
 subscriptionSchema.index({ 'razorpay.subscriptionId': 1 });
 

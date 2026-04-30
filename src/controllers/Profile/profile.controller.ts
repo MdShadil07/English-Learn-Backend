@@ -6,7 +6,7 @@ import { webSocketService } from '../../services/WebSocket/socketService.js';
 import subscriptionService from '../../services/Subscription/subscriptionService.js';
 import { Types } from 'mongoose';
 
-const USER_RESPONSE_FIELDS = 'email firstName lastName username role tier subscriptionStatus subscriptionPlan subscriptionStartDate subscriptionEndDate createdAt updatedAt';
+const USER_RESPONSE_FIELDS = 'email firstName lastName username role tier subscriptionStatus subscriptionPlan subscriptionStartDate subscriptionEndDate createdAt updatedAt googleAuth';
 
 const sanitizeValue = (value: unknown): unknown => {
   if (value === null || value === undefined) {

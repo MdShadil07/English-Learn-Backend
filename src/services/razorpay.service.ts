@@ -39,7 +39,7 @@ export function verifySignature(payload: string, signature: string, secret?: str
   if (!webhookSecret) {
     // If no secret available, verification must fail — don't consider signatures valid.
     // Log a warning to assist debugging but don't throw here.
-    // eslint-disable-next-line no-console
+     
     console.warn('RAZORPAY_WEBHOOK_SECRET not set; webhook signatures cannot be verified');
     return false;
   }

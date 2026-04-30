@@ -15,7 +15,7 @@ export class UserLevelController {
     try {
       const { userId } = req.params;
 
-      let userLevel = await UserLevel.findOne({ userId });
+      const userLevel = await UserLevel.findOne({ userId });
 
       if (!userLevel) {
         res.status(404).json({
@@ -88,7 +88,7 @@ export class UserLevelController {
       const { userId } = req.params;
       const { xpAmount, reason } = req.body;
 
-      let userLevel = await UserLevel.findOne({ userId });
+      const userLevel = await UserLevel.findOne({ userId });
 
       if (!userLevel) {
         res.status(404).json({
@@ -130,7 +130,7 @@ export class UserLevelController {
     try {
       const { userId } = req.params;
 
-      let userLevel = await UserLevel.findOne({ userId });
+      const userLevel = await UserLevel.findOne({ userId });
 
       if (!userLevel) {
         res.status(404).json({
@@ -168,7 +168,7 @@ export class UserLevelController {
       const { userId } = req.params;
       const skills = req.body;
 
-      let userLevel = await UserLevel.findOne({ userId });
+      const userLevel = await UserLevel.findOne({ userId });
 
       if (!userLevel) {
         res.status(404).json({
@@ -208,7 +208,7 @@ export class UserLevelController {
     try {
       const { userId } = req.params;
 
-      let userLevel = await UserLevel.findOne({ userId });
+      const userLevel = await UserLevel.findOne({ userId });
 
       if (!userLevel) {
         res.status(404).json({

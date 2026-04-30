@@ -34,8 +34,19 @@ router.post('/reset-password', passwordResetRateLimit, validatePasswordReset, au
 // Email verification
 router.get('/verify-email', authController.verifyEmail);
 
+// Google OAuth routes (public - for sign-in)
+router.post('/google/verify-token', authRateLimit, authController.verifyGoogleToken);
+
 // Protected routes (authentication required)
 router.use(authenticate); // All routes below require authentication
+
+// Google account linking with email-only verification (maximum security)
+router.post('/google/link/send-email-verification', authController.sendEmailOnlyGoogleLinkingVerification);
+router.post('/google/link/verify-email-code', authController.verifyEmailCodeAndLinkGoogle);
+router.post('/google/link/resend-email-verification', authController.resendEmailOnlyGoogleLinkingVerification);
+
+// Direct Google account linking (alternative method - requires authentication)
+router.post('/google/link', authController.linkGoogleAccountDirect);
 
 // Profile routes
 router.get('/profile', authController.getProfile);

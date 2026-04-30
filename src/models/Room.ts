@@ -38,13 +38,11 @@ const roomSchema = new Schema<IRoom, IRoomModel>(
       required: [true, 'Room ID is required'],
       unique: true,
       trim: true,
-      index: true,
     },
     roomCode: {
       type: String,
       trim: true,
       uppercase: true,
-      index: true,
       sparse: true, // Only indexed when present (private rooms)
     },
     topic: {
@@ -89,7 +87,6 @@ const roomSchema = new Schema<IRoom, IRoomModel>(
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: [true, 'Host ID is required'],
-      index: true,
     },
     maxParticipants: {
       type: Number,
@@ -119,7 +116,6 @@ const roomSchema = new Schema<IRoom, IRoomModel>(
       type: String,
       enum: ['active', 'closed'],
       default: 'active',
-      index: true,
     },
   },
   {
@@ -128,7 +124,11 @@ const roomSchema = new Schema<IRoom, IRoomModel>(
 );
 
 // Indexes for performance
+roomSchema.index({ roomId: 1 });
+roomSchema.index({ roomCode: 1 });
 roomSchema.index({ createdAt: -1 });
+roomSchema.index({ hostId: 1 });
+roomSchema.index({ status: 1 });
 roomSchema.index({ hostId: 1, status: 1 });
 roomSchema.index({ blockedUsers: 1 });
 roomSchema.index({ moderators: 1 });

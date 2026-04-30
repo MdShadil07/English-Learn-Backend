@@ -2,8 +2,11 @@ import { Request, Response } from 'express';
 import { User, RefreshToken, UserProfile } from '../../models/index.js';
 import { generateTokens } from '../../middleware/auth/auth.js';
 import authConfig from '../../config/auth.js';
-import { redisCache } from '../../config/redis.js';
+import { redisCache, CACHE_TTL } from '../../config/redis.js';
 import subscriptionService from '../../services/Subscription/subscriptionService.js';
+import { googleOAuthService } from '../../services/index.js';
+import { emailVerificationService } from '../../services/emailVerificationService.js';
+import { sendEmail } from '../../utils/emailService.js';
 
 interface AuthRequest extends Request {
   user?: any;
@@ -79,6 +82,23 @@ export class AuthController {
       });
 
       await user.save();
+
+      // Send welcome email for new user registration
+      try {
+        await sendEmail({
+          to: user.email,
+          subject: 'Welcome to CognitoSpeak! 🎉',
+          template: 'welcome',
+          data: {
+            userName: user.fullName,
+            appUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
+          },
+        });
+        console.log('✅ Welcome email sent to:', user.email);
+      } catch (emailError) {
+        console.error('❌ Failed to send welcome email:', emailError);
+        // Don't fail the registration if email fails
+      }
 
       // Generate tokens
       const { accessToken, refreshToken: refreshTokenValue } = generateTokens(user._id.toString(), user.email, user.role);
@@ -331,9 +351,16 @@ export class AuthController {
 
       // Check cache first
       const cacheKey = redisCache.getUserCacheKey(req.user._id.toString());
-      const cachedProfile = await redisCache.getJSON(cacheKey);
+      const cachedProfile = await redisCache.getJSON<any>(cacheKey);
 
       if (cachedProfile) {
+        console.log('🔍 getProfile - Returning cached profile, googleAuth:', JSON.stringify(cachedProfile.googleAuth, null, 2));
+        
+        // Prevent browser caching
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        
         return res.json({
           success: true,
           data: {
@@ -345,7 +372,7 @@ export class AuthController {
 
       // Fetch user profile data including avatar_url
       const profile = await UserProfile.findOne({ userId: req.user._id })
-        .populate('userId', 'email firstName lastName username fullName role isEmailVerified createdAt')
+        .populate('userId', 'email firstName lastName username fullName role isEmailVerified createdAt googleAuth')
         .lean();
 
       // Get subscription details
@@ -362,6 +389,7 @@ export class AuthController {
         avatar: profile?.avatar_url || null, // Include avatar_url from profile
         role: req.user.role,
         isEmailVerified: req.user.isEmailVerified,
+        googleAuth: req.user.googleAuth, // Include Google OAuth data
         tier: subDetails.tier,
         subscriptionStatus: req.user.subscription.status,
         subscriptionPlan: req.user.subscription.planCode,
@@ -382,7 +410,14 @@ export class AuthController {
       };
 
       // Cache for 5 minutes
-      await redisCache.setJSON(cacheKey, userData, 300);
+      await redisCache.setJSON(cacheKey, userData, CACHE_TTL.USER_PROFILE);
+
+      console.log('🔍 getProfile - userData.googleAuth:', JSON.stringify(userData.googleAuth, null, 2));
+
+      // Prevent browser caching to ensure fresh data
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
 
       return res.json({
         success: true,
@@ -617,6 +652,209 @@ export class AuthController {
       return res.status(500).json({
         success: false,
         message: 'Failed to verify email',
+      });
+    }
+  }
+
+  /**
+   * Verify Google ID token for sign-in (dual verification: email + Google ID)
+   */
+  async verifyGoogleToken(req: Request, res: Response) {
+    try {
+      const { idToken } = req.body;
+
+      if (!idToken) {
+        return res.status(400).json({
+          success: false,
+          message: 'Google ID token is required',
+        });
+      }
+
+      const result = await googleOAuthService.verifyIdToken(idToken);
+
+      if (!result.success) {
+        return res.status(401).json(result);
+      }
+
+      return res.json(result);
+    } catch (error) {
+      console.error('Google token verification error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to verify Google token',
+      });
+    }
+  }
+
+  /**
+   * Link Google account directly (requires authentication)
+   * This is the direct linking method - user must already be logged in
+   */
+  async linkGoogleAccountDirect(req: AuthRequest, res: Response) {
+    try {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          message: 'Authentication required',
+        });
+      }
+
+      const { googleToken } = req.body;
+
+      if (!googleToken) {
+        return res.status(400).json({
+          success: false,
+          message: 'Google token is required',
+        });
+      }
+
+      const result = await googleOAuthService.linkGoogleAccount(req.user._id.toString(), googleToken);
+
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      return res.json(result);
+    } catch (error) {
+      console.error('Google account linking error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to link Google account',
+      });
+    }
+  }
+
+  
+  /**
+   * Send email-only verification for Google account linking
+   */
+  async sendEmailOnlyGoogleLinkingVerification(req: Request, res: Response) {
+    try {
+      const { email } = req.body;
+      const userId = (req as any).user?.id || (req as any).user?._id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User authentication required',
+        });
+      }
+
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email is required',
+        });
+      }
+
+      const result = await emailVerificationService.sendEmailOnlyGoogleLinkingVerification(userId, email);
+
+      return res.json(result);
+    } catch (error) {
+      console.error('Email-only Google linking verification error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to send verification code',
+      });
+    }
+  }
+
+  /**
+   * Verify email code and link Google account
+   */
+  async verifyEmailCodeAndLinkGoogle(req: Request, res: Response) {
+    try {
+      const { code, email } = req.body;
+      const userId = (req as any).user?.id || (req as any).user?._id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User authentication required',
+        });
+      }
+
+      if (!code) {
+        return res.status(400).json({
+          success: false,
+          message: 'Verification code is required',
+        });
+      }
+
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email is required',
+        });
+      }
+
+      const result = await emailVerificationService.verifyEmailCodeAndLinkGoogle(userId, email, code);
+
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      // Invalidate Redis cache for this user
+      await redisCache.invalidateUserCache(userId);
+      console.log('🗑️ Cache invalidated for user:', userId);
+
+      // Fetch updated user data to return to frontend
+      const { User } = await import('../../models/index.js');
+      const updatedUser = await User.findById(userId).select('-password');
+
+      // Prevent browser caching
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+
+      console.log('🔍 verifyEmailCodeAndLinkGoogle - updatedUser.googleAuth:', JSON.stringify(updatedUser?.googleAuth, null, 2));
+
+      return res.json({
+        success: true,
+        message: 'Google account linked successfully!',
+        data: {
+          user: updatedUser
+        }
+      });
+    } catch (error) {
+      console.error('Email-only Google account verification error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to verify and link Google account',
+      });
+    }
+  }
+
+  /**
+   * Resend email-only verification code for Google account linking
+   */
+  async resendEmailOnlyGoogleLinkingVerification(req: Request, res: Response) {
+    try {
+      const { email } = req.body;
+      const userId = (req as any).user?.id || (req as any).user?._id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User authentication required',
+        });
+      }
+
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email is required',
+        });
+      }
+
+      const result = await emailVerificationService.resendEmailOnlyGoogleLinkingVerification(userId, email);
+
+      return res.json(result);
+    } catch (error) {
+      console.error('Resend email-only Google linking verification error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to resend verification code',
       });
     }
   }

@@ -41,7 +41,7 @@ import subscriptionRoutes from './routes/Subscription/subscription.routes.js';
 import { roomRoutes } from './routes/Room/index.js';
 
 // Import monitoring controller
-import { monitoringController } from './controllers/Monitoring/monitoring.controller.js';
+import { monitoringController, metricsMiddleware } from './controllers/Monitoring/monitoring.controller.js';
 import subscriptionService from './services/Subscription/subscriptionService.js';
 
 // Import WebSocket service
@@ -136,6 +136,9 @@ async function startServer(): Promise<void> {
 
     // Rate limiting
     app.use('/api/', apiRateLimit);
+
+    // Metrics middleware for load testing
+    app.use(metricsMiddleware);
 
     // Health check endpoint with performance metrics
     app.get('/health', enhancedHealthCheck);

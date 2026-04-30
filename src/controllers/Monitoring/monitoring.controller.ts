@@ -4,6 +4,65 @@ import v8 from 'v8';
 import { database } from '../../config/database.js';
 import { redisCache } from '../../config/redis.js';
 
+// Metrics storage for load testing
+interface MetricsStore {
+  requestCount: number;
+  errorCount: number;
+  totalResponseTime: number;
+  dbQueryCount: number;
+  totalDbQueryTime: number;
+  redisOperationCount: number;
+  totalRedisOperationTime: number;
+  activeConnections: number;
+  startTime: number;
+}
+
+const metricsStore: MetricsStore = {
+  requestCount: 0,
+  errorCount: 0,
+  totalResponseTime: 0,
+  dbQueryCount: 0,
+  totalDbQueryTime: 0,
+  redisOperationCount: 0,
+  totalRedisOperationTime: 0,
+  activeConnections: 0,
+  startTime: Date.now(),
+};
+
+// Middleware to track request metrics
+export const metricsMiddleware = (req: Request, res: Response, next: Function) => {
+  const startTime = Date.now();
+  
+  res.on('finish', () => {
+    const duration = Date.now() - startTime;
+    metricsStore.requestCount++;
+    metricsStore.totalResponseTime += duration;
+    
+    if (res.statusCode >= 400) {
+      metricsStore.errorCount++;
+    }
+  });
+  
+  next();
+};
+
+// Helper to track database queries
+export const trackDbQuery = (duration: number) => {
+  metricsStore.dbQueryCount++;
+  metricsStore.totalDbQueryTime += duration;
+};
+
+// Helper to track Redis operations
+export const trackRedisOperation = (duration: number) => {
+  metricsStore.redisOperationCount++;
+  metricsStore.totalRedisOperationTime += duration;
+};
+
+// Helper to track active connections
+export const trackConnection = (increment: boolean) => {
+  metricsStore.activeConnections += increment ? 1 : -1;
+};
+
 interface HealthCheck {
   status: 'healthy' | 'degraded' | 'unhealthy';
   timestamp: string;
@@ -153,11 +212,57 @@ export class MonitoringController {
    */
   async getMetrics(req: Request, res: Response) {
     try {
+      const uptime = Date.now() - metricsStore.startTime;
+      const avgResponseTime = metricsStore.requestCount > 0 
+        ? metricsStore.totalResponseTime / metricsStore.requestCount 
+        : 0;
+      const avgDbQueryTime = metricsStore.dbQueryCount > 0 
+        ? metricsStore.totalDbQueryTime / metricsStore.dbQueryCount 
+        : 0;
+      const avgRedisOperationTime = metricsStore.redisOperationCount > 0 
+        ? metricsStore.totalRedisOperationTime / metricsStore.redisOperationCount 
+        : 0;
+      const errorRate = metricsStore.requestCount > 0 
+        ? (metricsStore.errorCount / metricsStore.requestCount) * 100 
+        : 0;
+      const requestsPerSecond = uptime > 0 
+        ? (metricsStore.requestCount / (uptime / 1000)) 
+        : 0;
+
       const metrics = {
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
+        testUptime: uptime / 1000, // Test duration in seconds
         environment: process.env.NODE_ENV || 'development',
         version: process.env.npm_package_version || '1.0.0',
+
+        // Request metrics
+        requests: {
+          total: metricsStore.requestCount,
+          errors: metricsStore.errorCount,
+          errorRate: errorRate.toFixed(2) + '%',
+          avgResponseTime: avgResponseTime.toFixed(2) + 'ms',
+          requestsPerSecond: requestsPerSecond.toFixed(2),
+          activeConnections: metricsStore.activeConnections,
+        },
+
+        // Database metrics
+        database: {
+          connected: database.isConnected(),
+          connectionState: database.isConnected() ? 'connected' : 'disconnected',
+          queryCount: metricsStore.dbQueryCount,
+          avgQueryTime: avgDbQueryTime.toFixed(2) + 'ms',
+          totalQueryTime: metricsStore.totalDbQueryTime + 'ms',
+        },
+
+        // Redis metrics
+        redis: {
+          connected: redisCache.isConnected(),
+          connectionState: redisCache.isConnected() ? 'connected' : 'disconnected',
+          operationCount: metricsStore.redisOperationCount,
+          avgOperationTime: avgRedisOperationTime.toFixed(2) + 'ms',
+          totalOperationTime: metricsStore.totalRedisOperationTime + 'ms',
+        },
 
         // Process metrics
         process: {
@@ -166,11 +271,13 @@ export class MonitoringController {
             rss: process.memoryUsage().rss,
             heapUsed: process.memoryUsage().heapUsed,
             heapTotal: process.memoryUsage().heapTotal,
-            external: process.memoryUsage().external
+            external: process.memoryUsage().external,
+            usagePercent: ((process.memoryUsage().heapUsed / os.totalmem()) * 100).toFixed(2) + '%',
           },
           cpu: {
             user: process.cpuUsage().user,
-            system: process.cpuUsage().system
+            system: process.cpuUsage().system,
+            usagePercent: ((process.cpuUsage().user + process.cpuUsage().system) / 1000000).toFixed(2) + '%',
           }
         },
 
@@ -181,21 +288,10 @@ export class MonitoringController {
           nodeVersion: process.version,
           totalMemory: os.totalmem(),
           freeMemory: os.freemem(),
+          memoryUsagePercent: ((os.totalmem() - os.freemem()) / os.totalmem() * 100).toFixed(2) + '%',
           cpuCount: os.cpus().length,
           loadAverage: os.loadavg(),
           uptime: os.uptime()
-        },
-
-        // Database metrics
-        database: {
-          connected: database.isConnected(),
-          connectionState: database.isConnected() ? 'connected' : 'disconnected'
-        },
-
-        // Redis metrics
-        redis: {
-          connected: redisCache.isConnected(),
-          connectionState: redisCache.isConnected() ? 'connected' : 'disconnected'
         },
 
         // V8 heap statistics
@@ -204,7 +300,8 @@ export class MonitoringController {
           totalHeapSize: v8.getHeapStatistics().total_heap_size,
           usedHeapSize: v8.getHeapStatistics().used_heap_size,
           totalAvailableSize: v8.getHeapStatistics().total_available_size,
-          totalPhysicalSize: v8.getHeapStatistics().total_physical_size
+          totalPhysicalSize: v8.getHeapStatistics().total_physical_size,
+          heapUsagePercent: (v8.getHeapStatistics().used_heap_size / v8.getHeapStatistics().heap_size_limit * 100).toFixed(2) + '%',
         },
       };
 

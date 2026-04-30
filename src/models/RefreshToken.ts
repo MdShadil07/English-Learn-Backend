@@ -21,7 +21,6 @@ const refreshTokenSchema = new Schema<IRefreshToken>(
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: [true, 'User ID is required'],
-      index: true,
     },
     token: {
       type: String,
@@ -31,12 +30,10 @@ const refreshTokenSchema = new Schema<IRefreshToken>(
     expiresAt: {
       type: Date,
       required: [true, 'Expiration date is required'],
-      index: true,
     },
     isRevoked: {
       type: Boolean,
       default: false,
-      index: true,
     },
   },
   {
@@ -45,7 +42,9 @@ const refreshTokenSchema = new Schema<IRefreshToken>(
 );
 
 // Indexes for better performance
-// Note: expiresAt index is already defined in schema field with index: true
+refreshTokenSchema.index({ userId: 1 });
+refreshTokenSchema.index({ expiresAt: 1 });
+refreshTokenSchema.index({ isRevoked: 1 });
 
 // Static method to find valid token
 refreshTokenSchema.statics.findValidToken = function (token: string, userId: mongoose.Types.ObjectId) {

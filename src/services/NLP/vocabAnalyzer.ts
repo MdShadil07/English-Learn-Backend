@@ -15,7 +15,7 @@ try {
   // dynamic require/import — don't crash if the package isn't installed
   // wink-lemmatizer commonly exports functions; try to import and use `.word` if available
   // We avoid top-level async import for compatibility; require via eval-style import
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+   
   // (Wrap in try/catch to keep fallback behavior if not installed)
   // Note: during runtime in ESM environments, `require` may be unavailable — this will be ignored.
   // We'll attempt dynamic import below inside analyze() as well just in case.

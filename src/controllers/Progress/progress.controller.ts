@@ -284,7 +284,7 @@ export class ProgressController {
     try {
       const { userId } = req.params;
 
-      let userLevel = await UserLevel.findOne({ userId });
+      const userLevel = await UserLevel.findOne({ userId });
 
       if (!userLevel) {
         res.status(404).json({
@@ -359,7 +359,7 @@ export class ProgressController {
       const { userId } = req.params;
       const { xpAmount, reason } = req.body;
 
-      let userLevel = await UserLevel.findOne({ userId });
+      const userLevel = await UserLevel.findOne({ userId });
 
       if (!userLevel) {
         res.status(404).json({
@@ -402,7 +402,7 @@ export class ProgressController {
     try {
       const { userId } = req.params;
 
-      let userLevel = await UserLevel.findOne({ userId });
+      const userLevel = await UserLevel.findOne({ userId });
 
       if (!userLevel) {
         res.status(404).json({
@@ -441,7 +441,7 @@ export class ProgressController {
       const { userId } = req.params;
       const skills = req.body;
 
-      let userLevel = await UserLevel.findOne({ userId });
+      const userLevel = await UserLevel.findOne({ userId });
 
       if (!userLevel) {
         res.status(404).json({
@@ -482,7 +482,7 @@ export class ProgressController {
     try {
       const { userId } = req.params;
 
-      let userLevel = await UserLevel.findOne({ userId });
+      const userLevel = await UserLevel.findOne({ userId });
 
       if (!userLevel) {
         res.status(404).json({

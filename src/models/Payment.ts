@@ -28,13 +28,11 @@ const paymentSchema = new Schema<IPayment, IPaymentModel>(
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: [true, 'User ID is required'],
-      index: true,
     },
     subscriptionId: {
       type: Schema.Types.ObjectId,
       ref: 'Subscription',
       required: [true, 'Subscription ID is required'],
-      index: true,
     },
     provider: {
       type: String,
@@ -45,7 +43,6 @@ const paymentSchema = new Schema<IPayment, IPaymentModel>(
     paymentId: {
       type: String,
       required: true,
-      index: true,
     },
     orderId: {
       type: String,

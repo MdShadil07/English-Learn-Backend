@@ -1,15 +1,10 @@
 import { Request, Response } from 'express';
+import { AuthRequest } from '../../middleware/auth/auth.js';
 import aiChatSettingsService from '../../services/Ai Chat/aiChatSettingsService.js';
 import { ResponseLanguage } from '../../models/AiChatSettings.js';
 
-// Extend Request interface for authenticated requests
-interface AuthenticatedRequest extends Request {
-  user?: {
-    _id: any;
-    id: string;
-    tier?: string;
-  };
-}
+// Type alias for consistency
+type AuthenticatedRequest = AuthRequest;
 
 /**
  * AI Chat Settings Controller

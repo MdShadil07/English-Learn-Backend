@@ -4,6 +4,9 @@ export type { IUser } from './User.js';
 export { default as RefreshToken } from './RefreshToken.js';
 export type { IRefreshToken, IRefreshTokenModel } from './RefreshToken.js';
 
+export { default as OAuthToken } from './OAuthToken.js';
+export type { IOAuthToken, IOAuthTokenModel } from './OAuthToken.js';
+
 export { default as Progress } from './Progress.js';
 export type { IProgress } from './Progress.js';
 

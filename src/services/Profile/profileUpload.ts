@@ -1,15 +1,8 @@
 import { Request, Response } from 'express';
+import { AuthRequest } from '../../middleware/auth/auth.js';
 import { cloudStorage } from './cloudStorage.js';
 import { profileService } from './profileService.js';
 import { UserProfile } from '../../models/index.js';
-
-interface AuthRequest extends Request {
-  user?: {
-    _id: string;
-    email: string;
-    role: string;
-  };
-}
 
 export class ProfileUploadService {
   /**

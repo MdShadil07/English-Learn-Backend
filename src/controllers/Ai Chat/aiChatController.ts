@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import rateLimit from 'express-rate-limit';
 import { GeminiAIService, GenerateResponseRequest, ChatMessage } from '../../services/Ai Chat/geminiService.js';
-import { authenticate } from '../../middleware/auth/auth.js';
+import { authenticate, AuthRequest } from '../../middleware/auth/auth.js';
 import UserProfile from '../../models/UserProfile.js';
 import User from '../../models/User.js';
 import aiChatSettingsService from '../../services/Ai Chat/aiChatSettingsService.js';
@@ -13,14 +13,8 @@ import { optimizedAccuracyTracker } from '../../services/Accuracy/index.js';
 import { trackAIChatMessage } from '../../middleware/streakTracking.js';
 import { cache } from '../../middleware/cache.js';
 
-// Extend Request interface for authenticated requests
-interface AuthenticatedRequest extends Request {
-  user?: {
-    _id: any;
-    id: string;
-    tier?: string;
-  };
-}
+// Type alias for consistency
+type AuthenticatedRequest = AuthRequest;
 
 const router = Router();
 

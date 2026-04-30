@@ -1,6 +1,6 @@
 import { Router } from 'express';
 // Import authentication middleware
-import { authenticate, optionalAuth } from '../../middleware/auth/auth.js';
+import { authenticate, optionalAuth, AuthRequest } from '../../middleware/auth/auth.js';
 import { profileController } from '../../controllers/Profile/profile.controller.js';
 import { profileUploadService } from '../../services/Profile/profileUpload.js';
 import { avatarUploadService } from '../../services/Profile/avatarUploadService.js';
@@ -10,17 +10,6 @@ import {
   validateChangePassword
 } from '../../middleware/validation/validation.js';
 import { User, UserProfile } from '../../models/index.js';
-
-import { Request } from 'express';
-
-interface AuthRequest extends Request {
-  user?: {
-    _id: string;
-    email: string;
-    role: string;
-  };
-  file?: Express.Multer.File;
-}
 
 const router = Router();
 
@@ -552,7 +541,7 @@ router.post('/change-password', validateChangePassword, profileController.change
  *   500:
  *     description: Upload failed
  */
-router.post('/avatar-optimized', (req: AuthRequest, res: any, next) => {
+router.post('/avatar-optimized', (req: any, res: any, next: any) => {
   console.log('🚀 Optimized avatar upload route called');
   console.log('🌐 Content-Type:', req.headers['content-type']);
   console.log('📋 Body keys:', Object.keys(req.body));
@@ -613,21 +602,27 @@ router.post('/avatar-optimized', (req: AuthRequest, res: any, next) => {
  * @desc Upload profile document
  * @access Private
  */
-router.post('/document', documentUpload.single('document'), profileUploadService.uploadDocument);
+router.post('/document', documentUpload.single('document'), async (req: any, res: any) => {
+  return profileUploadService.uploadDocument(req, res);
+});
 
 /**
  * @route DELETE /api/profile/file/:fileType/:fileKey
  * @desc Delete profile file
  * @access Private
  */
-router.delete('/file/:fileType/:fileKey', profileUploadService.deleteFile);
+router.delete('/file/:fileType/:fileKey', async (req: any, res: any) => {
+  return profileUploadService.deleteFile(req, res);
+});
 
 /**
  * @route GET /api/profile/file/:fileKey
  * @desc Get file URL with authentication
  * @access Private
  */
-router.get('/file/:fileKey', profileUploadService.getFileUrl);
+router.get('/file/:fileKey', async (req: any, res: any) => {
+  return profileUploadService.getFileUrl(req, res);
+});
 
 /**
  * @route GET /api/profile/test-upload

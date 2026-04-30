@@ -3,6 +3,18 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// Cache TTL constants (in seconds)
+export const CACHE_TTL = {
+  USER_PROFILE: 300,        // 5 minutes
+  USER_SESSION: 3600,       // 1 hour
+  SUBSCRIPTION: 600,        // 10 minutes
+  OAUTH_STATE: 300,         // 5 minutes
+  LEADERBOARD: 60,          // 1 minute
+  STATIC_CONTENT: 3600,     // 1 hour
+  API_RESPONSE: 60,         // 1 minute
+  VERIFICATION_CODE: 300,   // 5 minutes
+} as const;
+
 interface CacheConfig {
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
@@ -183,12 +195,56 @@ class RedisCache implements CacheConfig {
     return `user:${userId}`;
   }
 
+  getUserProfileCacheKey(userId: string): string {
+    return `user:profile:${userId}`;
+  }
+
+  getUserSessionCacheKey(userId: string): string {
+    return `session:${userId}`;
+  }
+
+  getSubscriptionCacheKey(userId: string): string {
+    return `subscription:${userId}`;
+  }
+
+  getOAuthStateCacheKey(state: string): string {
+    return `oauth:state:${state}`;
+  }
+
+  getVerificationCodeCacheKey(email: string): string {
+    return `verification:${email}`;
+  }
+
   getUsersListCacheKey(page: number, limit: number): string {
     return `users:list:${page}:${limit}`;
   }
 
   getLeaderboardCacheKey(sortBy: string, limit: number): string {
     return `leaderboard:${sortBy}:${limit}`;
+  }
+
+  // Invalidate all user-related cache
+  async invalidateUserCache(userId: string): Promise<void> {
+    const keys = [
+      this.getUserCacheKey(userId),
+      this.getUserProfileCacheKey(userId),
+      this.getUserSessionCacheKey(userId),
+      this.getSubscriptionCacheKey(userId),
+    ];
+    await this.del(...keys);
+  }
+
+  // Invalidate pattern-based cache
+  async invalidatePattern(pattern: string): Promise<void> {
+    try {
+      const keys = await this.keys(pattern);
+      if (keys.length > 0) {
+        await this.del(...keys);
+        console.log(`🗑️ Invalidated ${keys.length} cache entries matching pattern: ${pattern}`);
+      }
+    } catch (error) {
+      console.error('❌ Error invalidating cache pattern:', error);
+    }
   }
 }
 

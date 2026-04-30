@@ -102,6 +102,9 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
     // For now, assume user is active if they exist in database
 
     console.log('✅ Auth middleware: Authentication successful for user:', user.email);
+    // Log googleAuth data for debugging
+    const userObj = user.toObject ? user.toObject() : user;
+    console.log('🔍 Auth middleware - user.googleAuth:', JSON.stringify(userObj.googleAuth, null, 2));
     req.user = user;
     req.token = token;
     next();
