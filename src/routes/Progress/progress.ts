@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { progressController } from '../../controllers/Progress/progress.controller.js';
+import optimizedProgressController from '../../controllers/optimizedProgressController.js';
 import { authenticate } from '../../middleware/auth/auth.js';
 
 const router = Router();
@@ -73,5 +74,19 @@ router.post('/calculate-total-xp-for-level', progressController.calculateTotalXP
  * @access Private
  */
 router.post('/:userId/update', authenticate, progressController.updateProgress);
+
+/**
+ * @route GET /api/progress/dashboard
+ * @desc Get optimized dashboard data
+ * @access Private
+ */
+router.get('/dashboard', authenticate, optimizedProgressController.getOptimizedDashboard);
+
+/**
+ * @route GET /api/progress/realtime
+ * @desc Get realtime progress data
+ * @access Private
+ */
+router.get('/realtime', authenticate, optimizedProgressController.getRealtimeProgress);
 
 export default router;

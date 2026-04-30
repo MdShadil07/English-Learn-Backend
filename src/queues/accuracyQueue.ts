@@ -165,10 +165,10 @@ const accuracyWorker = new Worker<AccuracyJobData>(
   },
   {
     connection: redisConnection,
-    concurrency: 10, // Process 10 jobs in parallel
+    concurrency: 50, // Process 50 jobs in parallel for scalability
     limiter: {
-      max: 100, // Max 100 jobs per interval
-      duration: 1000, // Per 1 second (100 jobs/second)
+      max: 500, // Max 500 jobs per interval
+      duration: 1000, // Per 1 second (500 jobs/second)
     },
   }
 );

@@ -6,7 +6,7 @@ import { redisCache, CACHE_TTL } from '../../config/redis.js';
 import subscriptionService from '../../services/Subscription/subscriptionService.js';
 import { googleOAuthService } from '../../services/index.js';
 import { emailVerificationService } from '../../services/emailVerificationService.js';
-import { sendEmail } from '../../utils/emailService.js';
+import { queueEmail } from '../../services/Email/emailQueueService.js';
 
 interface AuthRequest extends Request {
   user?: any;
@@ -84,20 +84,28 @@ export class AuthController {
       await user.save();
 
       // Send welcome email for new user registration
-      try {
-        await sendEmail({
-          to: user.email,
-          subject: 'Welcome to CognitoSpeak! 🎉',
-          template: 'welcome',
-          data: {
-            userName: user.fullName,
-            appUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
-          },
-        });
-        console.log('✅ Welcome email sent to:', user.email);
-      } catch (emailError) {
-        console.error('❌ Failed to send welcome email:', emailError);
-        // Don't fail the registration if email fails
+      // Only send if welcome email hasn't been sent yet
+      if (!user.welcomeEmailSent) {
+        try {
+          await queueEmail({
+            to: user.email,
+            subject: 'Welcome to CognitoSpeak! 🎉',
+            template: 'welcome',
+            data: {
+              userName: user.fullName,
+              appUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
+            },
+            priority: 'high'
+          });
+          console.log('✅ Welcome email queued for:', user.email);
+          
+          // Mark welcome email as sent
+          user.welcomeEmailSent = true;
+          await user.save();
+        } catch (emailError) {
+          console.error('❌ Failed to queue welcome email:', emailError);
+          // Don't fail the registration if email fails
+        }
       }
 
       // Generate tokens

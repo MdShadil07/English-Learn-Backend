@@ -8,6 +8,34 @@ import { logger } from '../../utils/calculators/core/logger.js';
 import { normalizeEnglishToken, tokenizeAsciiWords } from '../../utils/text/englishNormalizer.js';
 import { semanticVocabCalibrator, type SemanticPromotion } from './vocab/semanticCalibrator.js';
 import spellingChecker from './spellingChecker.js';
+import { readFileSync, existsSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+// Load pre-built CEFR dataset for O(1) lookup
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const DATASET_PATH = join(__dirname, '../../../data/cefr-final.json');
+
+let cefrDataset: Map<string, string> | null = null;
+
+function loadCEFRDataset(): void {
+  try {
+    if (existsSync(DATASET_PATH)) {
+      const data = readFileSync(DATASET_PATH, 'utf-8');
+      const parsed = JSON.parse(data);
+      cefrDataset = new Map(Object.entries(parsed));
+      logger.info(`✅ Loaded ${cefrDataset.size} words from CEFR dataset`);
+    } else {
+      logger.warn(`⚠️ CEFR dataset not found at ${DATASET_PATH}, using fallback wordlists`);
+    }
+  } catch (error) {
+    logger.warn({ error }, '⚠️ Failed to load CEFR dataset, using fallback wordlists');
+  }
+}
+
+// Load dataset on module initialization
+loadCEFRDataset();
 
 // Optional: use wink-lemmatizer when available to normalize words before CEFR lookup
 let lemmatizeWord: ((w: string) => string) | null = null;
@@ -398,6 +426,15 @@ class VocabularyAnalyzerService {
     if (!word) {
       return 'unknown';
     }
+
+    // First check pre-built dataset for O(1) lookup
+    if (cefrDataset && cefrDataset.size > 0) {
+      const normalized = word.toLowerCase().replace(/[^a-z-]/g, '');
+      const level = cefrDataset.get(normalized);
+      if (level && CEFR_WORDLISTS[level as keyof typeof CEFR_WORDLISTS]) {
+        return level as keyof typeof CEFR_WORDLISTS;
+      }
+    }
     if (CEFR_WORDLISTS.A1.has(word)) return 'A1';
     if (CEFR_WORDLISTS.A2.has(word)) return 'A2';
     if (CEFR_WORDLISTS.B1.has(word)) return 'B1';
@@ -572,20 +609,25 @@ class VocabularyAnalyzerService {
             if (suggestions.length > 0) {
               const candidate = (lemmatizeWord ? lemmatizeWord(suggestions[0]) : suggestions[0]).toLowerCase();
               level = this.getWordLevel(candidate);
+              // Count the suggested word's level, not as unknown
+              distribution[level]++;
             } else {
-              // leave as unknown for now
-              level = 'unknown';
+              // If no suggestion available, skip counting this word for vocabulary
+              // It's a spelling error, not a vocabulary weakness
+              wordLevels.push({ word, level: 'unknown', misspelled });
+              continue;
             }
           } else {
             const candidate = lemmatizeWord ? lemmatizeWord(word) : word;
             level = this.getWordLevel(candidate.toLowerCase());
+            distribution[level]++;
           }
         } catch (err) {
           // If spelling check fails unexpectedly, fall back to lookup
           level = this.getWordLevel(word);
+          distribution[level]++;
         }
 
-        distribution[level]++;
         wordLevels.push({ word, level, misspelled });
       }
 
@@ -628,13 +670,18 @@ class VocabularyAnalyzerService {
       // Calculate score (0-100) with stricter unknown word penalty
       const levelScores = { A1: 40, A2: 55, B1: 70, B2: 80, C1: 90, C2: 95 };
       let baseScore = levelScores[overallLevel as keyof typeof levelScores] || 50;
-      
+
       // Heavy penalty for unknown words (not in any CEFR list)
       const unknownRatio = distribution.unknown / normalizedWords.length;
       const advancedCount = distribution.B2 + distribution.C1 + distribution.C2;
       const advancedRatio = advancedCount / normalizedWords.length;
       const longWordCount = wordLevels.filter(({ word }) => word.length >= 8).length;
       let longWordRatio = longWordCount / normalizedWords.length;
+
+      // Apply penalty for any unknown words above 5%
+      if (unknownRatio > 0.05) {
+        baseScore -= unknownRatio * 50;
+      }
 
       if (unknownRatio > 0.82) {
         // 82%+ unknown = critically low vocabulary (32-42 range)
@@ -712,6 +759,18 @@ class VocabularyAnalyzerService {
         console.log(`     C1: ${distribution.C1} words`);
         console.log(`     C2: ${distribution.C2} words`);
         console.log(`     Unknown: ${distribution.unknown} words (${(unknownRatio * 100).toFixed(1)}%)`);
+
+        // Debug: Show which words are classified at each level
+        console.log(`  🔍 Word-level classification:`);
+        const wordsByLevel: Record<string, string[]> = { A1: [], A2: [], B1: [], B2: [], C1: [], C2: [], unknown: [] };
+        wordLevels.forEach(({ word, level }) => {
+          wordsByLevel[level].push(word);
+        });
+        Object.entries(wordsByLevel).forEach(([level, words]) => {
+          if (words.length > 0) {
+            console.log(`     ${level}: ${words.join(', ')}`);
+          }
+        });
         console.log(`  🎯 Scoring Breakdown:`);
         console.log(`     Overall level: ${overallLevel}`);
         console.log(`     Base score: ${levelScores[overallLevel as keyof typeof levelScores]}`);
@@ -788,10 +847,6 @@ class VocabularyAnalyzerService {
     
     if (level === 'A1' || level === 'A2') {
       suggestions.push('Good start! Try incorporating intermediate-level words (B1) to improve');
-    }
-    
-    if (diversity > 0.7) {
-      suggestions.push('Excellent word variety! Your vocabulary is diverse');
     }
 
     let synonymHintCount = 0;

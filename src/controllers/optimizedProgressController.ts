@@ -547,30 +547,28 @@ export const getOptimizedDashboard = async (
       return;
     }
 
+    // Use fastAccuracyCache as primary source for consistency with realtime endpoint
+    const fastCachedAccuracy = fastAccuracyCache.getAccuracy(userId);
+    const optimizedCachedAccuracy = await optimizedAccuracyTracker.getCachedAccuracy(userId);
+
     const progress = await Progress.findOne({ userId })
       .select(`
         totalXP
         currentLevel
+        prestigeLevel
+        currentLevelXP
+        xpToNextLevel
         streak.current
         streak.longest
         streak.todayProgress
         streak.stats
         streak.milestones
-  accuracyData.overallAccuracySummary
-        accuracyData.overall
-        accuracyData.grammar
-        accuracyData.vocabulary
-        accuracyData.spelling
-        accuracyData.fluency
-        accuracyData.punctuation
-        accuracyData.capitalization
-        accuracyData.syntax
-        accuracyData.coherence
         stats.totalSessions
         stats.totalTimeSpent
         stats.averageSessionTime
         xpBreakdown
         skillMetrics
+        updatedAt
       `)
       .lean();
 
@@ -586,35 +584,8 @@ export const getOptimizedDashboard = async (
     const todayMinutesGoal = todayMinutesGoalRaw && todayMinutesGoalRaw > 0 ? todayMinutesGoalRaw : 10;
     const todayMessagesGoal = todayMessagesGoalRaw && todayMessagesGoalRaw > 0 ? todayMessagesGoalRaw : 5;
 
-    // Use overallAccuracySummary as primary source, fallback to deprecated fields for backward compatibility
-    const summary = progressRecord.accuracyData?.overallAccuracySummary;
-    const accuracySource = summary
-      ? {
-          overall: summary.overallAccuracy,
-          grammar: summary.overallGrammar,
-          vocabulary: summary.overallVocabulary,
-          spelling: summary.overallSpelling,
-          fluency: summary.overallFluency,
-          punctuation: summary.overallPunctuation,
-          capitalization: summary.overallCapitalization,
-          syntax: summary.overallSyntax,
-          coherence: summary.overallCoherence,
-          calculationCount: summary.calculationCount,
-          lastCalculated: summary.lastCalculated,
-        }
-      : {
-          overall: progressRecord.accuracyData?.overall,
-          grammar: progressRecord.accuracyData?.grammar,
-          vocabulary: progressRecord.accuracyData?.vocabulary,
-          spelling: progressRecord.accuracyData?.spelling,
-          fluency: progressRecord.accuracyData?.fluency,
-          punctuation: progressRecord.accuracyData?.punctuation,
-          capitalization: progressRecord.accuracyData?.capitalization,
-          syntax: progressRecord.accuracyData?.syntax,
-          coherence: progressRecord.accuracyData?.coherence,
-          calculationCount: progressRecord.accuracyData?.calculationCount,
-          lastCalculated: progressRecord.accuracyData?.lastCalculated,
-        };
+    // Use fastAccuracyCache as primary source for consistency
+    const accuracySource = fastCachedAccuracy || optimizedCachedAccuracy || progressRecord.accuracyData;
 
     const dashboardData = {
       overview: {
@@ -638,17 +609,17 @@ export const getOptimizedDashboard = async (
         ),
       },
       accuracy: {
-  overall: accuracySource?.overall ?? 0,
-  grammar: accuracySource?.grammar ?? 0,
-  vocabulary: accuracySource?.vocabulary ?? 0,
-  spelling: accuracySource?.spelling ?? 0,
-  fluency: accuracySource?.fluency ?? 0,
-  punctuation: accuracySource?.punctuation ?? 0,
-  capitalization: accuracySource?.capitalization ?? 0,
-  syntax: accuracySource?.syntax ?? 0,
-  coherence: accuracySource?.coherence ?? 0,
-  calculationCount: accuracySource?.calculationCount ?? 0,
-  lastCalculated: accuracySource?.lastCalculated ?? null,
+        overall: accuracySource?.overall ?? 0,
+        grammar: accuracySource?.grammar ?? 0,
+        vocabulary: accuracySource?.vocabulary ?? 0,
+        spelling: accuracySource?.spelling ?? 0,
+        fluency: accuracySource?.fluency ?? 0,
+        punctuation: accuracySource?.punctuation ?? 0,
+        capitalization: accuracySource?.capitalization ?? 0,
+        syntax: accuracySource?.syntax ?? 0,
+        coherence: accuracySource?.coherence ?? 0,
+        calculationCount: accuracySource?.messageCount ?? accuracySource?.calculationCount ?? 0,
+        lastCalculated: toIsoString(accuracySource?.lastUpdated || accuracySource?.lastCalculated || null),
       },
       streakStats: {
         current: progressRecord.streak?.current ?? 0,
@@ -669,7 +640,7 @@ export const getOptimizedDashboard = async (
       console.error('[DASHBOARD] Failed to cache dashboard payload', cacheError);
     }
 
-    res.status(200).json({ success: true, source: 'database', data: dashboardData });
+    res.status(200).json({ success: true, source: fastCachedAccuracy ? 'fast-cache' : 'database', data: dashboardData });
   } catch (error) {
     console.error('Error getting dashboard:', error);
     res.status(500).json({ error: 'Failed to get dashboard data' });

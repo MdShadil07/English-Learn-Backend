@@ -51,13 +51,13 @@ type CategoryKey = typeof CATEGORY_KEYS[number] & keyof IAccuracyData;
 
 // Per-category "responsiveness" preferences: higher means more responsive to current performance
 // (0..1) - 1.0 favors current message strongly, 0.0 favors historical data
-// TUNED: Reduced grammar (0.7→0.65) and fluency (0.85→0.75) for better stability
+// TUNED: Increased fluency responsiveness to prevent drastic drops from current to weighted
 const CATEGORY_RESPONSIVENESS: Record<CategoryKey, number> = {
   overall: 0.8,
   grammar: 0.65,      // TUNED: Reduced from 0.7 (-7%)
   vocabulary: 0.75,
   spelling: 0.7,
-  fluency: 0.75,      // TUNED: Reduced from 0.85 (-12%)
+  fluency: 0.85,      // TUNED: Increased from 0.75 to prevent drastic drops
   punctuation: 0.75,
   capitalization: 0.7,
 };
@@ -117,7 +117,8 @@ export class FinalWeightedAccuracyService {
 
     // 🚀 STEP 6: Apply graduated penalty system based on error count (Priority 2)
     if (errorCount !== undefined && errorCount > 0) {
-      smoothed.adjustedOverall = this.applyGraduatedPenalty(smoothed.overall || 0, errorCount);
+      const wordCount = (normalizedCurrent as any).statistics?.wordCount || 0;
+      smoothed.adjustedOverall = this.applyGraduatedPenalty(smoothed.overall || 0, errorCount, wordCount);
     }
 
     // Persist/update historical context in Redis + occasionally DB
@@ -396,12 +397,18 @@ export class FinalWeightedAccuracyService {
       if (process.env.DEBUG_WEIGHTING === 'true') {
         console.log(`[weight-debug] cat=${cat} prev=${prevVal} curr=${currVal} resp=${resp.toFixed(2)} histWeight=${histWeight.toFixed(3)} curWeight=${curWeight.toFixed(3)} total=${total.toFixed(3)} weighted=${weightedVal.toFixed(2)}`);
       }
-      
+
       // 🚀 CRITICAL FIX: NO-AMPLIFICATION CLAMP per category
-      // Ensure weighted value never exceeds both current AND previous by more than 4 points
-      const maxBase = Math.max(currVal, prevVal);
-      const cappedWeightedVal = Math.min(weightedVal, maxBase + 4);
-      
+      // Ensure weighted value never exceeds current value (bad input shouldn't improve score)
+      let maxAllowed = currVal + 2; // Allow max 2 point boost for stability
+
+      // Extra strict clamp for vocabulary when current score is low (< 60)
+      if (cat === 'vocabulary' && currVal < 60) {
+        maxAllowed = currVal + 1; // Only allow 1 point boost for low vocabulary scores
+      }
+
+      const cappedWeightedVal = Math.min(weightedVal, maxAllowed);
+
       result[cat] = Math.round(cappedWeightedVal);
     }
 
@@ -423,20 +430,12 @@ export class FinalWeightedAccuracyService {
     const computedOverall = this.clamp(Math.round(totalScore / (weightSum || 1)));
     
     // 🚀 CRITICAL FIX: NO-AMPLIFICATION CLAMP on computed overall
-    // Ensure overall never exceeds current basic score by more than specified margin
+    // Ensure overall never exceeds current basic score (bad input shouldn't improve score)
     const currentOverall = this.clamp(this.getNumber(current.overall, 0, 0));
     const previousOverall = this.clamp(this.getNumber(previous.overall, 0, 0));
-    
-    // 🚀 ENHANCED: Tighter clamp for middle-range scores (70-85%)
-    // These scores tend to get over-amplified, so use stricter limit
-    let maxBoostAllowed = 6;
-    if (currentOverall >= 70 && currentOverall <= 85) {
-      maxBoostAllowed = 3; // Tighter clamp for middle range
-    } else if (currentOverall > 85) {
-      maxBoostAllowed = 4; // Moderate clamp for good scores
-    }
-    
-    const maxAllowedOverall = Math.max(currentOverall, previousOverall) + maxBoostAllowed;
+
+    // 🚀 STRICT: Weighted overall should never exceed current overall by more than 2 points
+    const maxAllowedOverall = currentOverall + 2;
     result.overall = Math.min(computedOverall, maxAllowedOverall);
     
     // FIX #4: Apply dynamic penalty based on low-performing metrics
@@ -577,15 +576,19 @@ export class FinalWeightedAccuracyService {
   /**
    * 🚀 PRIORITY 2: GRADUATED PENALTY SYSTEM
    * Apply penalty based on error count with graduated thresholds
+   * Scaled by text length to avoid over-penalizing short texts
    * - 15+ errors: -40% penalty
    * - 10-14 errors: -25% penalty
    * - 8-9 errors: -15% penalty
    * - 5-7 errors: -5% penalty
    * - <5 errors: No penalty
+   *
+   * For short texts (<20 words), penalties are reduced by 50%
+   * For very short texts (<10 words), penalties are reduced by 75%
    */
-  private applyGraduatedPenalty(score: number, errorCount: number): number {
+  private applyGraduatedPenalty(score: number, errorCount: number, wordCount?: number): number {
     let penaltyPercent = 0;
-    
+
     if (errorCount >= 15) {
       penaltyPercent = 40;
     } else if (errorCount >= 10) {
@@ -595,14 +598,25 @@ export class FinalWeightedAccuracyService {
     } else if (errorCount >= 5) {
       penaltyPercent = 5;
     }
-    
+
+    // Scale penalty based on text length to avoid over-penalizing short texts
+    if (wordCount && wordCount < 20) {
+      if (wordCount < 10) {
+        // Very short text: reduce penalty by 75%
+        penaltyPercent = Math.round(penaltyPercent * 0.25);
+      } else {
+        // Short text: reduce penalty by 50%
+        penaltyPercent = Math.round(penaltyPercent * 0.5);
+      }
+    }
+
     const penaltyPoints = Math.round(score * (penaltyPercent / 100));
     const adjustedScore = Math.max(0, score - penaltyPoints);
-    
+
     if (penaltyPercent > 0) {
-      console.log(`⚠️ Graduated Penalty Applied: ${errorCount} errors → -${penaltyPercent}% (-${penaltyPoints} points) → ${adjustedScore}%`);
+      console.log(`⚠️ Graduated Penalty Applied: ${errorCount} errors → -${penaltyPercent}% (-${penaltyPoints} points) → ${adjustedScore}%${wordCount ? ` (text length: ${wordCount} words)` : ''}`);
     }
-    
+
     return adjustedScore;
   }
 

@@ -127,6 +127,14 @@ class SpellingCheckerService {
     return !!(this.dictionary && this.initialized && !this.initializationFailed);
   }
 
+  /**
+   * Check if spelling checker has a valid dictionary loaded
+   * Returns false if dictionary files are missing or initialization failed
+   */
+  hasValidDictionary(): boolean {
+    return this.isAvailable();
+  }
+
   check(word: string): boolean {
     // If dictionary isn't available, assume correctness — don't create false negatives.
     if (!this.dictionary) return true;
@@ -286,7 +294,7 @@ class SpellingCheckerService {
     .split(/\s+/)
     .map((w) => w.replace(/[.,!?;:\"'()\[\]{}]/g, '').trim())
     .filter((w: string) => w.length >= 2 && SpellingCheckerService.WORD_REGEX.test(w));
-    
+
     if (words.length === 0) return 100;
     
     const accuracy = ((words.length - errors.length) / words.length) * 100;
@@ -324,6 +332,7 @@ class SpellingCheckerService {
       errorsFound: null,
       errors: [],
       source: 'typo-js-unavailable',
+      hasValidDictionary: false,
     };
   }
 
@@ -334,7 +343,7 @@ class SpellingCheckerService {
     .map((w) => w.replace(/[.,!?;:\"'()\[\]{}]/g, '').trim())
     .filter((w: string) => w.length >= 2 && SpellingCheckerService.WORD_REGEX.test(w));
   const accuracy = words.length === 0 ? 100 : ((words.length - errors.length) / words.length) * 100;
-    
+
     const report = {
       accuracy,
       totalWords: words.length,
@@ -345,6 +354,7 @@ class SpellingCheckerService {
         confidence: e.confidence,
       })),
       source: 'typo-js',
+      hasValidDictionary: true,
     };
 
     if (process.env.NODE_ENV === 'development') {
@@ -354,7 +364,7 @@ class SpellingCheckerService {
       console.log(`     Errors: ${errors.length}`);
       console.log(`     Source: typo-js`);
     }
-    
+
     return report;
   }
 }

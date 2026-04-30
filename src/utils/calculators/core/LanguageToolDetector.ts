@@ -34,12 +34,28 @@ const CRITICAL_CONTEXT_PATTERNS: RegExp[] = [
   /\bwe\s+was\s+\w+/,
 ];
 
+// Circuit breaker state
+interface CircuitBreakerState {
+  isOpen: boolean;
+  failureCount: number;
+  lastFailureTime: number;
+  nextAttemptTime: number;
+}
+
 export class LanguageToolDetector implements IErrorDetector {
   name = 'LanguageTool';
   priority = 1;
 
   private baseURL: string;
   private cache: ICache;
+  private circuitBreaker: CircuitBreakerState = {
+    isOpen: false,
+    failureCount: 0,
+    lastFailureTime: 0,
+    nextAttemptTime: 0,
+  };
+  private readonly CIRCUIT_BREAKER_THRESHOLD = 5;
+  private readonly CIRCUIT_BREAKER_TIMEOUT = 60000; // 1 minute
 
   constructor(
     baseURL: string = process.env.LANGUAGETOOL_URL || 'http://localhost:8081/v2',
@@ -61,6 +77,20 @@ export class LanguageToolDetector implements IErrorDetector {
       return cached;
     }
 
+    // 🔹 Step 2: Check circuit breaker
+    if (this.circuitBreaker.isOpen) {
+      const now = Date.now();
+      if (now < this.circuitBreaker.nextAttemptTime) {
+        nlpLogger.warn('LanguageTool circuit breaker is open, skipping API call');
+        return [];
+      } else {
+        // Attempt to reset circuit breaker
+        this.circuitBreaker.isOpen = false;
+        this.circuitBreaker.failureCount = 0;
+        nlpLogger.info('LanguageTool circuit breaker reset, attempting API call');
+      }
+    }
+
     const startTime = Date.now();
 
     try {
@@ -77,20 +107,37 @@ export class LanguageToolDetector implements IErrorDetector {
       });
 
       const matches: LanguageToolMatch[] = response.data.matches || [];
-  const errors = matches.map(match => this.convertToErrorDetail(match));
+      const errors = matches.map(match => this.convertToErrorDetail(match));
 
       // 🔹 Cache results for 1 hour
       await this.cache.set(cacheKey, errors, 3600);
+
+      // Reset circuit breaker on success
+      this.circuitBreaker.failureCount = 0;
+      this.circuitBreaker.isOpen = false;
 
       const duration = Date.now() - startTime;
       nlpLogger.info({ errorCount: errors.length, duration }, 'LanguageTool detection complete');
 
       return errors;
     } catch (error: any) {
+      // Update circuit breaker state
+      this.circuitBreaker.failureCount++;
+      this.circuitBreaker.lastFailureTime = Date.now();
+
+      if (this.circuitBreaker.failureCount >= this.CIRCUIT_BREAKER_THRESHOLD) {
+        this.circuitBreaker.isOpen = true;
+        this.circuitBreaker.nextAttemptTime = Date.now() + this.CIRCUIT_BREAKER_TIMEOUT;
+        nlpLogger.error(
+          { failureCount: this.circuitBreaker.failureCount, nextAttemptIn: this.CIRCUIT_BREAKER_TIMEOUT },
+          'LanguageTool circuit breaker opened'
+        );
+      }
+
       // ✅ Clean logging of errors
       const url = `${this.baseURL}/check`;
       nlpLogger.error(
-        { url, message: error.message, code: error.code, status: error.response?.status },
+        { url, message: error.message, code: error.code, status: error.response?.status, failureCount: this.circuitBreaker.failureCount },
         'LanguageTool API error'
       );
       return [];

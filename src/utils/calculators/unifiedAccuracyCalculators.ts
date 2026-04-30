@@ -102,6 +102,85 @@ const normalizeDialectVariants = (text: string): string => {
 };
 
 // ============================================
+// TEXT NORMALIZATION (MANDATORY PREPROCESSING)
+// ============================================
+
+function normalizeText(text: string): string {
+  if (!text) return '';
+
+  let normalized = text;
+
+  // Fix typographic quotes first
+  normalized = normalized.replace(/[“”„‟]/g, '"');
+  normalized = normalized.replace(/[‘’‚‛]/g, "'");
+
+  // Expand contractions
+  const contractions: Record<string, string> = {
+    "i'm": "i am",
+    "you're": "you are",
+    "he's": "he is",
+    "she's": "she is",
+    "it's": "it is",
+    "we're": "we are",
+    "they're": "they are",
+    "i've": "i have",
+    "you've": "you have",
+    "we've": "we have",
+    "they've": "they have",
+    "i'll": "i will",
+    "you'll": "you will",
+    "he'll": "he will",
+    "she'll": "she will",
+    "it'll": "it will",
+    "we'll": "we will",
+    "they'll": "they will",
+    "i'd": "i would",
+    "you'd": "you would",
+    "he'd": "he would",
+    "she'd": "she would",
+    "it'd": "it would",
+    "we'd": "we would",
+    "they'd": "they would",
+    "isn't": "is not",
+    "aren't": "are not",
+    "wasn't": "was not",
+    "weren't": "were not",
+    "haven't": "have not",
+    "hasn't": "has not",
+    "hadn't": "had not",
+    "won't": "will not",
+    "wouldn't": "would not",
+    "don't": "do not",
+    "doesn't": "does not",
+    "didn't": "did not",
+    "can't": "cannot",
+    "couldn't": "could not",
+    "shouldn't": "should not",
+    "mightn't": "might not",
+    "mustn't": "must not",
+    "let's": "let us",
+    "that's": "that is",
+    "who's": "who is",
+    "what's": "what is",
+    "where's": "where is",
+    "when's": "when is",
+    "why's": "why is",
+    "how's": "how is",
+  };
+
+  // Apply contractions expansion
+  for (const [contraction, expansion] of Object.entries(contractions)) {
+    const regex = new RegExp(`\\b${contraction}\\b`, 'gi');
+    normalized = normalized.replace(regex, expansion);
+  }
+
+  // Normalize multiple spaces and trim
+  normalized = normalized.replace(/\s+/g, ' ').trim();
+
+  return normalized;
+}
+
+// ============================================
 // TYPE DEFINITIONS
 // ============================================
 
@@ -208,6 +287,20 @@ export interface CategoryMetricMap {
   vocabulary?: VocabularyCategoryMetrics;
   spelling?: SpellingCategoryMetrics;
   pronunciation?: PronunciationCategoryMetrics;
+  coherence?: {
+    score: number;
+    transitions: number;
+    topicConsistency: number;
+    logicalFlow: number;
+    trend?: CategoryTrendInsight;
+  };
+  style?: {
+    score: number;
+    passiveVoiceUsage: number;
+    sentenceVariety: number;
+    formalityScore: number;
+    trend?: CategoryTrendInsight;
+  };
 }
 
 export interface HistoricalWeightingConfig {
@@ -855,6 +948,73 @@ const GRAMMAR_RULES: GrammarRule[] = [
     examples: ['I don\'t have anything (not "don\'t have nothing")', 'He didn\'t see anyone (not "didn\'t see nobody")'],
     tier: 'free',
   },
+  // Additional rules for common incorrect speech patterns
+  {
+    id: 'missing-article-singular',
+    pattern: /\b\s+(cat|dog|book|car|house|apple|idea|person|job|problem|solution)\b(?!\s+(is|are|was|were|have|has))/gi,
+    message: 'Missing article before singular noun',
+    category: 'grammar',
+    severity: 'medium',
+    suggestion: (match) => `Add "a" or "an" before "${match[1]}"`,
+    explanation: 'Singular countable nouns typically require an article (a/an/the).',
+    examples: ['I have a cat (not "I have cat")', 'This is an idea (not "This is idea")'],
+    tier: 'free',
+  },
+  {
+    id: 'wrong-tense-time-mismatch',
+    pattern: /\b(now|today|currently)\b.*\b(went|came|took|made|saw|got|gave|knew|thought|found|told|became|began|brought|bought|caught|chose|did|drank|drove|ate|fell|felt|forgot|heard|kept|left|lost|met|paid|ran|said|sold|sent|sat|spoke|stood|taught|understood|won|wrote)\b/gi,
+    message: 'Past tense verb used with present time expression',
+    category: 'grammar',
+    severity: 'critical',
+    suggestion: (match) => 'Use present tense form of the verb',
+    explanation: 'Present time expressions (now, today, currently) require present tense verbs.',
+    examples: ['I go now (not "I went now")', 'She comes today (not "she came today")'],
+    tier: 'free',
+  },
+  {
+    id: 'incorrect-verb-form-continuous',
+    pattern: /\b(I|you|we|they)\s+(goes|does|has|tries|wants)\b/gi,
+    message: 'Incorrect verb form for subject',
+    category: 'grammar',
+    severity: 'critical',
+    suggestion: (match) => {
+      const [, subject, verb] = match;
+      const correctVerb = verb === 'goes' ? 'go' : verb === 'does' ? 'do' : verb === 'has' ? 'have' : verb === 'tries' ? 'try' : verb === 'wants' ? 'want' : verb;
+      return `Use "${subject} ${correctVerb}" instead of "${subject} ${verb}"`;
+    },
+    explanation: 'First-person and plural subjects (I, you, we, they) use base form of verbs.',
+    examples: ['I go (not "I goes")', 'They do (not "they does")'],
+    tier: 'free',
+  },
+  {
+    id: 'missing-to-infinitive',
+    pattern: /\b(want|need|try|hope|plan|expect|decide)\s+(go|do|make|take|see|get|give|know|think|find|tell|become|begin|bring|buy|catch|choose|do|drink|drive|eat|fall|feel|forget|hear|keep|leave|lose|meet|pay|run|say|sell|send|sit|speak|stand|teach|understand|win|write)\b(?!ing)\b/gi,
+    message: 'Missing "to" before infinitive verb',
+    category: 'grammar',
+    severity: 'high',
+    suggestion: (match) => {
+      const [, aux, verb] = match;
+      return `Use "${aux} to ${verb}" instead of "${aux} ${verb}"`;
+    },
+    explanation: 'Verbs like want, need, try require "to" before the following verb.',
+    examples: ['I want to go (not "I want go")', 'She needs to try (not "she needs try")'],
+    tier: 'free',
+  },
+  {
+    id: 'wrong-preposition-verb',
+    pattern: /\b(wait|look|listen|talk|speak)\s+(at|in|on)\b/gi,
+    message: 'Incorrect preposition after verb',
+    category: 'grammar',
+    severity: 'medium',
+    suggestion: (match) => {
+      const [full, verb] = match;
+      const correctPrep = verb === 'wait' ? 'for' : verb === 'look' ? 'at' : verb === 'listen' ? 'to' : verb === 'talk' || verb === 'speak' ? 'to' : 'at';
+      return `Use "${verb} ${correctPrep}" instead of "${full}"`;
+    },
+    explanation: 'Some verbs require specific prepositions.',
+    examples: ['wait for (not "wait at")', 'listen to (not "listen in")'],
+    tier: 'free',
+  },
   
   // Article Errors (Pro+)
   {
@@ -1052,6 +1212,23 @@ export class UnifiedAccuracyCalculator {
       return false;
     }
 
+    // Check if spelling checker has a valid dictionary loaded
+    const hasValidDict = (spellingContribution as any)?.hasValidDictionary ?? true;
+    if (!hasValidDict) {
+      debugConsoleWarn('⚠️ Spelling checker dictionary not properly loaded - skipping spelling scoring');
+      // Set spelling to null to indicate it's not available
+      try {
+        result.spelling = null as any;
+        if (!result.categoryDetails) result.categoryDetails = {};
+        result.categoryDetails.spelling = result.categoryDetails.spelling || {} as any;
+        (result.categoryDetails.spelling as any).score = null;
+        (result.categoryDetails.spelling as any).unavailable = true;
+      } catch (e) {
+        // ignore assignment errors
+      }
+      return true;
+    }
+
     const rawAccuracy = Number(spellingContribution.accuracy);
     if (!Number.isFinite(rawAccuracy)) {
       // If Typo reported `null` (unavailable), surface null spelling score to the result
@@ -1060,6 +1237,7 @@ export class UnifiedAccuracyCalculator {
         if (!result.categoryDetails) result.categoryDetails = {};
         result.categoryDetails.spelling = result.categoryDetails.spelling || {} as any;
         (result.categoryDetails.spelling as any).score = null;
+        (result.categoryDetails.spelling as any).unavailable = true;
       } catch (e) {
         // ignore assignment errors
       }
@@ -1399,13 +1577,17 @@ export class UnifiedAccuracyCalculator {
         .map(r => `${r.rule}(${r.count})`);
 
       // Update result.grammar and categoryDetails if present
-      result.grammar = adjustedGrammarScore;
+      // Cap grammar score at 60 if there are critical errors to align scoring with error severity
+      const criticalErrorCount = result.errors.filter((e: any) => e.severity === 'critical' || e.severity === 'error').length;
+      const finalGrammarScore = criticalErrorCount >= 1 ? Math.min(adjustedGrammarScore, 60) : adjustedGrammarScore;
+
+      result.grammar = finalGrammarScore;
       if (!result.categoryDetails) {
         result.categoryDetails = {};
       }
       if (!result.categoryDetails.grammar) {
         result.categoryDetails.grammar = {
-          score: adjustedGrammarScore,
+          score: finalGrammarScore,
           weightedPenalty: Math.min(100, deduction),
           normalizedImpact: Math.min(1, deduction / 100),
           severityDistribution,
@@ -1413,7 +1595,7 @@ export class UnifiedAccuracyCalculator {
           totalErrors: ltErrors,
         } as GrammarCategoryMetrics;
       } else {
-        result.categoryDetails.grammar.score = adjustedGrammarScore;
+        result.categoryDetails.grammar.score = finalGrammarScore;
         result.categoryDetails.grammar.weightedPenalty = Math.min(100, deduction);
         result.categoryDetails.grammar.normalizedImpact = Math.min(1, deduction / 100);
         result.categoryDetails.grammar.severityDistribution = severityDistribution;
@@ -1669,8 +1851,8 @@ export class UnifiedAccuracyCalculator {
                 rawGrammarScore = Math.max(20, 50 - (totalGrammarErrors - 5) * 5);
               }
             } else {
-              // Rule 2: LT reports zero errors — do NOT let AI rephrasing collapse the grammar score.
-              // Use fallbackCount only (heuristic), but ensure a minimum floor of 80.
+              // Rule 2: LT reports zero errors — use fallbackCount (heuristic) without artificial floor
+              // This allows accurate scoring when user speaks incorrectly
               totalGrammarErrors = fallbackCount; // ignore aiGrammarCount here
               if (totalGrammarErrors === 0) {
                 rawGrammarScore = 100;
@@ -1682,9 +1864,8 @@ export class UnifiedAccuracyCalculator {
                 rawGrammarScore = Math.max(20, 50 - (totalGrammarErrors - 5) * 5);
               }
 
-              // Enforce minimum floor for LT-perfect signals
-              rawGrammarScore = Math.max(rawGrammarScore, 80);
-              console.log('ℹ️ LT=0 → enforcing grammar floor >= 80');
+              // No artificial floor - score reflects actual grammar quality
+              console.log(`ℹ️ LT=0 → using heuristic errors: ${totalGrammarErrors}, score: ${rawGrammarScore}`);
             }
 
             console.log('Final grammar score before normalization:', rawGrammarScore);
@@ -1722,10 +1903,10 @@ export class UnifiedAccuracyCalculator {
         // Compose explicit statistics to avoid conflating fluency/vocab penalties with grammar errors
         try {
           const contrib: any = basicResult.nlpContributions || {};
-          const grammarErrors = Number(contrib?.languageTool?.errors || 0);
-          const spellingErrors = Number((contrib?.spelling?.errorsFound ?? (contrib?.spelling?.errors?.length ?? 0)) || 0);
-          const vocabularyUnknown = Number(contrib?.vocabulary?.cefrDistribution?.unknown ?? 0);
-          const fluencyScore = Number(contrib?.fluency?.score ?? basicResult.fluency ?? 100);
+          const grammarErrors = Math.max(0, Number(contrib?.languageTool?.errors || 0));
+          const spellingErrors = Math.max(0, Number((contrib?.spelling?.errorsFound ?? (contrib?.spelling?.errors?.length ?? 0)) || 0));
+          const vocabularyUnknown = Math.max(0, Number(contrib?.vocabulary?.cefrDistribution?.unknown ?? 0));
+          const fluencyScore = Math.max(0, Math.min(100, Number(contrib?.fluency?.score ?? basicResult.fluency ?? 100)));
           const fluencyPenalties = Math.max(0, 100 - fluencyScore);
 
           basicResult.statistics = {
@@ -1737,7 +1918,12 @@ export class UnifiedAccuracyCalculator {
           } as any;
           // Compute user-friendly totals with NaN protection
           try {
-            let totalErrors = Number(grammarErrors || 0) + Number(spellingErrors || 0) + Number(vocabularyUnknown || 0) + Number(fluencyPenalties || 0);
+            const grammarErrorsNum = Number(grammarErrors || 0);
+            const spellingErrorsNum = Number(spellingErrors || 0);
+            const vocabularyUnknownNum = Number(vocabularyUnknown || 0);
+            const fluencyPenaltiesNum = Number(fluencyPenalties || 0);
+
+            let totalErrors = grammarErrorsNum + spellingErrorsNum + vocabularyUnknownNum + fluencyPenaltiesNum;
             if (!Number.isFinite(totalErrors) || Number.isNaN(totalErrors)) totalErrors = 0;
 
             // critical errors from LanguageTool details (if available)
@@ -1746,13 +1932,27 @@ export class UnifiedAccuracyCalculator {
 
             (basicResult.statistics as any).totalErrors = totalErrors;
             (basicResult.statistics as any).criticalErrors = criticalErrors;
+            (basicResult.statistics as any).errors = totalErrors; // Ensure errors field is set
           } catch (e) {
             debugConsoleWarn('Failed to compute total/critical statistics', e);
             (basicResult.statistics as any).totalErrors = 0;
             (basicResult.statistics as any).criticalErrors = 0;
+            (basicResult.statistics as any).errors = 0;
           }
         } catch (statErr) {
           debugConsoleWarn('Failed to compute separated statistics', statErr);
+          // Ensure statistics object exists with safe defaults
+          if (!basicResult.statistics) {
+            basicResult.statistics = {
+              totalErrors: 0,
+              criticalErrors: 0,
+              errors: 0,
+              grammarErrors: 0,
+              spellingErrors: 0,
+              vocabularyPenalties: 0,
+              fluencyPenalties: 0,
+            } as any;
+          }
         }
 
         this.logNLPContributions(basicResult.nlpContributions);
@@ -1786,6 +1986,28 @@ export class UnifiedAccuracyCalculator {
         if (await this.applySpellingContributionFromNLP(basicResult)) {
           basicResult.overall = this.calculateOverallScore(basicResult);
           basicResult.adjustedOverall = basicResult.overall;
+        }
+
+        // Apply fluency contribution if present (ensure single source of truth)
+        try {
+          const fluencyContrib = (basicResult.nlpContributions as any)?.fluency;
+          if (fluencyContrib && typeof fluencyContrib.score === 'number') {
+            const bounded = Math.max(0, Math.min(100, Number(fluencyContrib.score)));
+            basicResult.fluency = Math.round(bounded);
+            if (!basicResult.categoryDetails) basicResult.categoryDetails = {} as CategoryMetricMap;
+            basicResult.categoryDetails.pronunciation = {
+              score: basicResult.fluency,
+              method: fluencyContrib.method ?? 'rule-based',
+              confidence: fluencyContrib.confidence ?? basicResult.fluency,
+            } as any;
+            (basicResult.nlpContributions as any).fluency = {
+              ...(basicResult.nlpContributions as any).fluency,
+              appliedToScore: true,
+            };
+            debugConsoleLog('🔁 Applied NLP fluency contribution to result.fluency', basicResult.fluency);
+          }
+        } catch (e) {
+          debugConsoleWarn('⚠️ Failed to apply fluency contribution from NLP:', e);
         }
       } else if (languageContext?.analysisNotes?.length) {
         basicResult.nlpContributions = {
@@ -1973,9 +2195,20 @@ export class UnifiedAccuracyCalculator {
       result.languageContext = languageContext;
     }
     
+    // ============================================
+    // TEXT NORMALIZATION (MANDATORY PREPROCESSING)
+    // ============================================
+    const normalizedMessage = normalizeText(message);
+    debugConsoleLog(`🔄 [Normalization] Original: "${message.substring(0, 50)}..."`);
+    debugConsoleLog(`🔄 [Normalization] Normalized: "${normalizedMessage.substring(0, 50)}..."`);
+    
+    // Update statistics with normalized message
+    result.statistics.wordCount = normalizedMessage.split(/\s+/).length;
+    result.statistics.sentenceCount = normalizedMessage.split(/[.!?]+/).length - 1;
+    
     // Grammar analysis
     if (features.basicGrammar) {
-  const grammarResult = await this.analyzeGrammar(message, tier, level, languageContext, !!enableNLP);
+  const grammarResult = await this.analyzeGrammar(normalizedMessage, tier, level, languageContext, !!enableNLP);
       result.grammar = grammarResult.score;
       result.errors.push(...grammarResult.errors);
       result.feedback.push(...grammarResult.feedback);
@@ -1989,7 +2222,7 @@ export class UnifiedAccuracyCalculator {
     
     // Spelling analysis
     if (features.basicSpelling) {
-  const spellingResult = this.analyzeSpelling(message, tier);
+      const spellingResult = this.analyzeSpelling(normalizedMessage, tier);
       result.spelling = spellingResult.score;
       result.errors.push(...spellingResult.errors);
       result.feedback.push(...spellingResult.feedback);
@@ -2000,10 +2233,10 @@ export class UnifiedAccuracyCalculator {
         ...spellingResult.metrics,
       };
     }
-    
+
     // Vocabulary analysis
     if (features.basicVocabulary) {
-  const vocabResult = this.analyzeVocabulary(message, tier, level);
+      const vocabResult = this.analyzeVocabulary(normalizedMessage, tier, level);
       result.vocabulary = vocabResult.score;
       result.errors.push(...vocabResult.errors);
       result.feedback.push(...vocabResult.feedback);
@@ -2013,16 +2246,19 @@ export class UnifiedAccuracyCalculator {
       result.categoryDetails.vocabulary = {
         ...vocabResult.metrics,
       };
-      
+
       // Add advanced vocabulary analysis for pro/premium
       if (vocabResult.vocabularyAnalysis) {
         result.vocabularyAnalysis = vocabResult.vocabularyAnalysis;
+        // Store vocabularyLevel in result for consistency
+        (result as any).vocabularyLevel = vocabResult.vocabularyAnalysis.level;
       }
     }
-    
-    // Fluency analysis
-    if (features.basicFluency) {
-      const fluencyResult = this.analyzeFluency(message, tier, level);
+
+    // Fluency analysis - skip if NLP fluency was already applied
+    const nlpFluencyApplied = (result.nlpContributions as any)?.fluency?.appliedToScore;
+    if (features.basicFluency && !nlpFluencyApplied) {
+      const fluencyResult = this.analyzeFluency(normalizedMessage, tier, level);
       result.fluency = fluencyResult.score;
       result.errors.push(...fluencyResult.errors);
       result.feedback.push(...fluencyResult.feedback);
@@ -2035,7 +2271,7 @@ export class UnifiedAccuracyCalculator {
     }
     
     // Punctuation analysis
-    const punctuationResult = this.analyzePunctuation(message);
+    const punctuationResult = this.analyzePunctuation(normalizedMessage);
     result.punctuation = punctuationResult.score;
     result.errors.push(...punctuationResult.errors);
 
@@ -2052,7 +2288,7 @@ export class UnifiedAccuracyCalculator {
     }
     
     // Capitalization analysis
-    const capitalizationResult = this.analyzeCapitalization(message);
+    const capitalizationResult = this.analyzeCapitalization(normalizedMessage);
     result.capitalization = capitalizationResult.score;
     result.errors.push(...capitalizationResult.errors);
 
@@ -2109,11 +2345,14 @@ export class UnifiedAccuracyCalculator {
       avgSyllablesPerWord: words.reduce((sum, word) => sum + this.countSyllables(word), 0) / Math.max(words.length, 1),
       complexWordCount: words.filter(w => this.countSyllables(w) >= 3).length,
       uniqueWordRatio: new Set(words.map(w => w.toLowerCase())).size / Math.max(words.length, 1),
-      errorCount: result.errors.length,
-      criticalErrorCount: result.errors.filter(e => e.severity === 'critical').length,
-      errorsByCategory: this.categorizeErrors(result.errors),
+      errorCount: Number(result.errors?.length || 0),
+      criticalErrorCount: Number(result.errors?.filter((e: any) => e?.severity === 'critical').length || 0),
+      errors: Number(result.errors?.length || 0),
+      totalErrors: Number(result.errors?.length || 0),
+      criticalErrors: Number(result.errors?.filter((e: any) => e?.severity === 'critical').length || 0),
+      errorsByCategory: this.categorizeErrors(result.errors || []),
       processingTime: 0,
-    };
+    } as any;
     
     // ===== EXTRACT ERRORS FROM AI RESPONSE (PRIMARY SOURCE OF TRUTH) =====
     // Use improved error extraction to avoid overcounting
@@ -2799,6 +3038,76 @@ export class UnifiedAccuracyCalculator {
       }
     }
 
+    // Tense consistency with time markers (yesterday, last week, etc.)
+    const pastTimeMarkers = /\b(yesterday|last\s+(week|month|year|night|morning|evening|friday|monday|tuesday|wednesday|thursday|saturday|sunday)|ago|in\s+\d{4}|on\s+\w+\s+\d{1,2}(?:st|nd|rd|th)?)/gi;
+    const presentTenseVerbs = /\b(go|goes|go|buy|buys|buy|eat|eats|eat|drink|drinks|drink|write|writes|write|read|reads|read|speak|speaks|speak|walk|walks|walk|run|runs|run|play|plays|play|work|works|work|study|studies|study|learn|learns|learn|teach|teaches|teach|think|thinks|think|know|knows|know|understand|understands|understand|see|sees|see|hear|hears|hear|feel|feels|feel|want|wants|want|need|needs|need|like|likes|like|love|loves|love|hate|hates|hate)\b/gi;
+
+    // Missing apostrophe detection for contractions
+    const missingApostrophePatterns = [
+      { wrong: "didnt", correct: "didn't" },
+      { wrong: "im", correct: "I'm" },
+      { wrong: "cant", correct: "can't" },
+      { wrong: "wont", correct: "won't" },
+      { wrong: "dont", correct: "don't" },
+      { wrong: "doesnt", correct: "doesn't" },
+      { wrong: "isnt", correct: "isn't" },
+      { wrong: "arent", correct: "aren't" },
+      { wrong: "wasnt", correct: "wasn't" },
+      { wrong: "werent", correct: "weren't" },
+      { wrong: "havent", correct: "haven't" },
+      { wrong: "hasnt", correct: "hasn't" },
+      { wrong: "couldnt", correct: "couldn't" },
+      { wrong: "shouldnt", correct: "shouldn't" },
+      { wrong: "wouldnt", correct: "wouldn't" },
+    ];
+
+    let missingApostropheCount = 0;
+    missingApostrophePatterns.forEach(({ wrong, correct }) => {
+      const regex = new RegExp(`\\b${wrong}\\b`, 'gi');
+      let match: RegExpExecArray | null;
+      while ((match = regex.exec(messageNormalized)) !== null) {
+        const start = match.index;
+        const end = start + match[0].length;
+        addError({
+          type: 'grammar',
+          category: 'correctness',
+          severity: 'medium',
+          message: `Missing apostrophe: ${wrong}`,
+          position: { start, end, word: message.substring(start, end) || match[0] },
+          suggestion: `Use "${correct}" instead`,
+          rule: 'heuristic-missing-apostrophe',
+        });
+        missingApostropheCount++;
+      }
+    });
+
+    let pastTimeMatch: RegExpExecArray | null;
+    while ((pastTimeMatch = pastTimeMarkers.exec(messageNormalized)) !== null) {
+      const marker = pastTimeMatch[0];
+      const markerEnd = pastTimeMatch.index + marker.length;
+
+      // Check for present tense verbs after the time marker (within the same sentence)
+      const sentenceAfterMarker = messageNormalized.substring(markerEnd, markerEnd + 100);
+      let verbMatch: RegExpExecArray | null;
+      while ((verbMatch = presentTenseVerbs.exec(sentenceAfterMarker)) !== null) {
+        const verb = verbMatch[0];
+        const verbStart = markerEnd + verbMatch.index;
+        const verbEnd = verbStart + verb.length;
+
+        // Add error for tense mismatch
+        addError({
+          type: 'grammar',
+          category: 'correctness',
+          severity: 'critical',
+          message: `Use past tense verb after "${marker}"`,
+          position: { start: verbStart, end: verbEnd, word: verb },
+          suggestion: `Consider using past tense form of "${verb}"`,
+          rule: 'heuristic-tense-consistency',
+        });
+        heuristicNotes.push(`tense mismatch: "${verb}" after "${marker}"`);
+      }
+    }
+
     const perfectSequencePattern = /\b(started|began)\b([^.!?]*?)(hasn't|has not)/gi;
     let perfectSequenceMatch: RegExpExecArray | null;
     while ((perfectSequenceMatch = perfectSequencePattern.exec(messageNormalized)) !== null) {
@@ -3015,6 +3324,11 @@ export class UnifiedAccuracyCalculator {
     }
   const totalErrors = effectiveGrammarErrors.length;
 
+    // If LanguageTool detected errors but they weren't included in effectiveGrammarErrors,
+    // still count them for feedback to avoid contradictory messages
+    const languageToolErrorCount = ltErrors.length;
+    const finalTotalErrors = Math.max(totalErrors, languageToolErrorCount);
+
     const severityDistribution: Record<ErrorSeverity, number> = {
       critical: 0,
       major: 0,
@@ -3141,6 +3455,17 @@ export class UnifiedAccuracyCalculator {
       feedback.push('Timeline alignment: Use past perfect ("hadn\'t") after past actions like "started".');
     }
 
+    if (missingApostropheCount > 0) {
+      const penaltyValue = missingApostropheCount * 5; // -5 per missing apostrophe
+      heuristicPenaltyTotal += penaltyValue;
+      score = Math.max(0, score - penaltyValue);
+      heuristicPenalties.push({
+        rule: 'heuristic-missing-apostrophe',
+        penalty: penaltyValue,
+        reason: `Detected ${missingApostropheCount} missing apostrophe(s) in contractions.`,
+      });
+    }
+
     score = Math.max(0, Math.min(100, score));
 
   const criticalErrors = effectiveGrammarErrors.filter((e) => e.severity === 'critical').length;
@@ -3150,10 +3475,13 @@ export class UnifiedAccuracyCalculator {
     const maxFeedback = TIER_FEATURES[tier].maxFeedbackPoints;
     const dominantIssues: string[] = [];
 
-    if (totalErrors === 0) {
-      feedback.push('Excellent grammar! No issues detected.');
+    if (finalTotalErrors === 0) {
+      // Only give positive feedback if NLP is disabled (final analysis) or if we're confident
+      if (!enableNLP || score >= 90) {
+        feedback.push('Excellent grammar! No issues detected.');
+      }
     } else {
-      feedback.push(`Detected ${totalErrors} grammar issue${totalErrors > 1 ? 's' : ''} across ${groupedByRule.size} pattern${groupedByRule.size > 1 ? 's' : ''}.`);
+      feedback.push(`Detected ${finalTotalErrors} grammar issue${finalTotalErrors > 1 ? 's' : ''} across ${groupedByRule.size} pattern${groupedByRule.size > 1 ? 's' : ''}.`);
       if (criticalErrors > 0) {
         feedback.push(`${criticalErrors} critical issue${criticalErrors > 1 ? 's' : ''} need immediate attention.`);
       }
@@ -3328,8 +3656,8 @@ export class UnifiedAccuracyCalculator {
     const normalizedDensity = errorCount / Math.max(totalTokens, 1);
     const contentDensity = contentTokenCount > 0 ? contentErrors / contentTokenCount : 0;
     const functionDensity = functionTokenCount > 0 ? functionErrors / functionTokenCount : 0;
-    const weightedPenalty = (contentDensity * 0.7) + (functionDensity * 0.3);
-    const score = Math.max(0, Math.round(100 - weightedPenalty * 100));
+    // Simple score calculation: 100 - (errors/totalWords) * 100
+    const score = Math.max(0, Math.round(100 - (errorCount / Math.max(totalTokens, 1)) * 100));
     
     // Generate tier-appropriate feedback
     const maxFeedback = TIER_FEATURES[tier].maxFeedbackPoints;
@@ -3349,8 +3677,6 @@ export class UnifiedAccuracyCalculator {
           feedback.push(`Words to check: ${uniqueErrors.slice(0, 5).join(', ')}`);
         }
       }
-    } else {
-      feedback.push('No spelling issues detected — great job!');
     }
     
     if (tier !== 'free' && errorCount > 0) {
@@ -3391,7 +3717,25 @@ export class UnifiedAccuracyCalculator {
     
     // Extract words for analysis
     const rawWords: string[] = message.match(/\b\w+\b/g) || [];
-    const words = rawWords;
+    
+    // ============================================
+    // SPELLING CORRECTION BEFORE VOCABULARY ANALYSIS
+    // ============================================
+    const correctedWords = rawWords.map(word => {
+      const lowerWord = word.toLowerCase();
+      // Check if word is misspelled
+      if (!spellingChecker.check(lowerWord)) {
+        // Get spelling suggestions
+        const suggestions = spellingChecker.suggest(lowerWord);
+        if (suggestions.length > 0) {
+          // Use the best suggestion for vocabulary analysis
+          return suggestions[0];
+        }
+      }
+      return word;
+    });
+    
+    const words = correctedWords;
     const avgWordLength = words.length > 0 
       ? words.reduce((sum: number, word: string) => sum + word.length, 0) / words.length 
       : 0;
@@ -3456,10 +3800,11 @@ export class UnifiedAccuracyCalculator {
     
     // Generate feedback
     const maxFeedback = TIER_FEATURES[tier].maxFeedbackPoints;
-    
-    if (vocabularyDiversity > 0.8) {
+
+    // Use vocabulary score for feedback instead of diversity alone
+    if (score >= 75) {
       feedback.push('Excellent vocabulary diversity!');
-    } else if (vocabularyDiversity > 0.6) {
+    } else if (score >= 60) {
       feedback.push('Good vocabulary usage');
     } else {
       feedback.push('Try using more varied vocabulary');
@@ -4109,7 +4454,15 @@ export class UnifiedAccuracyCalculator {
       (result.capitalization || 0) * categoryWeights.capitalization;
     
     // Round to nearest integer
-    const finalScore = Math.round(weightedScore);
+    let finalScore = Math.round(weightedScore);
+    
+    // ============================================
+    // SHORT INPUT OVER-SCORING FIX
+    // ============================================
+    const wordCount = result.statistics?.wordCount ?? 0;
+    if (wordCount < 3) {
+      finalScore = Math.round(finalScore * 0.7); // Reduce score by 30% for very short inputs
+    }
     
     // Ensure score is within valid range [0, 100]
     return Math.max(0, Math.min(100, finalScore));
@@ -4172,7 +4525,7 @@ export class UnifiedAccuracyCalculator {
       styleScore: this.clampScore(result.styleAnalysis?.engagement),
       freeNLPEnhanced: result.nlpEnhanced,
       nlpCost: result.nlpEnhanced ? '$0/month' : undefined,
-      vocabularyLevel: result.vocabularyAnalysis?.level,
+      vocabularyLevel: (result as any).vocabularyLevel || result.vocabularyAnalysis?.level,
       lastCalculated: new Date(),
       calculationCount: 1,
     };
@@ -4499,8 +4852,23 @@ export class UnifiedAccuracyCalculator {
       redundancyPenalty = 6;
     }
 
+    // ============================================
+    // REPETITION PENALTY (FLUENCY ISSUE FIX)
+    // ============================================
+    let repetitionPenalty = 0;
+    const wordFrequency: Record<string, number> = {};
+    normalizedWords.forEach(word => {
+      wordFrequency[word] = (wordFrequency[word] || 0) + 1;
+    });
+    
+    Object.values(wordFrequency).forEach(count => {
+      if (count > 2) {
+        repetitionPenalty += (count - 2) * 3; // 3 points penalty per extra repetition
+      }
+    });
+
     const baseScore = (readabilityScore * 0.4) + (sentenceSmoothnessScore * 0.35) + (cohesionScore * 0.25);
-    let score = Math.round(baseScore - fillerPenalty - redundancyPenalty);
+    let score = Math.round(baseScore - fillerPenalty - redundancyPenalty - repetitionPenalty);
 
     const punctuationVariety = new Set((message.match(/[,:;?!]/g) || [])).size;
     const stressIndicators = (message.match(/\b[A-Z]{2,}\b/g) || []).length;

@@ -25,6 +25,7 @@ export interface IUser extends Document {
   
   // Email verification
   isEmailVerified: boolean;
+  welcomeEmailSent: boolean;
   lastLoginAt?: Date;
   
   // Quick-access subscription snapshot
@@ -141,6 +142,10 @@ const userSchema = new Schema<IUser>(
       type: Boolean,
       default: false,
       index: true,
+    },
+    welcomeEmailSent: {
+      type: Boolean,
+      default: false,
     },
     lastLoginAt: {
       type: Date,
