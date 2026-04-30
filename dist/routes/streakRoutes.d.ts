@@ -1,0 +1,7 @@
+/**
+ * Streak Routes
+ * Endpoints for streak management
+ */
+declare const router: import("express-serve-static-core").Router;
+export default router;
+//# sourceMappingURL=streakRoutes.d.ts.map

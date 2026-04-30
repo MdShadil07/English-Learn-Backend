@@ -1,0 +1,30 @@
+import cors from 'cors';
+import { Request, Response, NextFunction } from 'express';
+export declare const corsOptions: cors.CorsOptions;
+export declare const securityHeaders: (req: import("http").IncomingMessage, res: import("http").ServerResponse, next: (err?: unknown) => void) => void;
+export declare const requestLogger: (req: Request, res: Response, next: NextFunction) => void;
+export declare const sanitizeInput: (req: Request, res: Response, next: NextFunction) => void;
+export declare const validateApiKey: (req: Request, res: Response, next: NextFunction) => void | Response<any, Record<string, any>>;
+export declare const requestTimeout: (req: Request, res: Response, next: NextFunction) => void;
+export declare const hppMiddleware: import("express").RequestHandler<import("express-serve-static-core").ParamsDictionary, any, any, import("qs").ParsedQs, Record<string, any>>;
+export declare const mongoSanitizeMiddleware: import("express").Handler;
+export declare const xssProtection: (req: any, res: any, next: any) => void;
+export declare const securityErrorHandler: (error: Error, req: Request, res: Response, next: NextFunction) => void;
+export declare const ipWhitelist: (allowedIPs?: string[]) => (req: Request, res: Response, next: NextFunction) => void;
+export declare const sensitiveRateLimit: import("express-rate-limit").RateLimitRequestHandler;
+declare const _default: {
+    corsOptions: cors.CorsOptions;
+    securityHeaders: (req: import("http").IncomingMessage, res: import("http").ServerResponse, next: (err?: unknown) => void) => void;
+    requestLogger: (req: Request, res: Response, next: NextFunction) => void;
+    sanitizeInput: (req: Request, res: Response, next: NextFunction) => void;
+    validateApiKey: (req: Request, res: Response, next: NextFunction) => void | Response<any, Record<string, any>>;
+    requestTimeout: (req: Request, res: Response, next: NextFunction) => void;
+    hppMiddleware: import("express").RequestHandler<import("express-serve-static-core").ParamsDictionary, any, any, import("qs").ParsedQs, Record<string, any>>;
+    mongoSanitizeMiddleware: import("express").Handler;
+    xssProtection: (req: any, res: any, next: any) => void;
+    securityErrorHandler: (error: Error, req: Request, res: Response, next: NextFunction) => void;
+    ipWhitelist: (allowedIPs?: string[]) => (req: Request, res: Response, next: NextFunction) => void;
+    sensitiveRateLimit: import("express-rate-limit").RateLimitRequestHandler;
+};
+export default _default;
+//# sourceMappingURL=security.d.ts.map

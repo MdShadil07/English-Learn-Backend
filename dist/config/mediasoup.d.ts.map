@@ -1,0 +1,1 @@
+{"version":3,"file":"mediasoup.d.ts","sourceRoot":"","sources":["../../src/config/mediasoup.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EACV,cAAc,EACd,aAAa,EACb,sBAAsB,EACvB,MAAM,iBAAiB,CAAC;AAGzB,eAAO,MAAM,eAAe;;YAQrB,cAAc;YA2Bd,aAAa;qBAeb,sBAAsB;CAC5B,CAAC"}

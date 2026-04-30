@@ -1,0 +1,1 @@
+{"version":3,"file":"errorHandler.d.ts","sourceRoot":"","sources":["../../../../src/services/WebSocket/utils/errorHandler.ts"],"names":[],"mappings":"AAAA,eAAO,MAAM,cAAc,GACzB,SAAS,MAAM,EACf,OAAO,OAAO,EACd,WAAU,MAAM,CAAC,MAAM,EAAE,GAAG,CAAM,KACjC,IAYF,CAAC;AAEF,eAAO,MAAM,aAAa,GAAI,SAAS,MAAM,EAAE,WAAU,MAAM,CAAC,MAAM,EAAE,GAAG,CAAM,KAAG,IAMnF,CAAC"}

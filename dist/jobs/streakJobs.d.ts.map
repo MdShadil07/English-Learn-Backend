@@ -1,0 +1,1 @@
+{"version":3,"file":"streakJobs.d.ts","sourceRoot":"","sources":["../../src/jobs/streakJobs.ts"],"names":[],"mappings":"AAAA;;;;;;GAMG;AAMH,cAAM,kBAAkB;IACtB,OAAO,CAAC,IAAI,CAAuB;IAEnC;;OAEG;IACH,KAAK,IAAI,IAAI;IA+Db;;OAEG;YACW,kBAAkB;IAMhC;;OAEG;YACW,0BAA0B;IAMxC;;OAEG;IACH,IAAI,IAAI,IAAI;CAIb;AAGD,eAAO,MAAM,kBAAkB,oBAA2B,CAAC;AAC3D,eAAe,kBAAkB,CAAC"}
