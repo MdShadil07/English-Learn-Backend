@@ -1,11 +1,26 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Types } from 'mongoose';
-import sharp from 'sharp';
 import crypto from 'crypto';
 import fs from 'fs';
 import { UserProfile } from '../../models/index.js';
 import { profileService } from './profileService.js';
 import { cloudStorage } from './cloudStorage.js';
+
+// Lazy-loaded Sharp module
+let sharpModule: any = null;
+
+async function getSharp() {
+  if (sharpModule === null) {
+    try {
+      sharpModule = await import('sharp');
+      console.log('✅ Sharp module loaded successfully');
+    } catch (error) {
+      console.warn('⚠️ Sharp module not available - image optimization will be disabled:', (error as Error).message);
+      sharpModule = false; // Mark as failed to avoid repeated attempts
+    }
+  }
+  return sharpModule === false ? null : sharpModule;
+}
 
 /**
  * High-Performance Avatar Upload Service for Supabase Storage
@@ -222,21 +237,27 @@ export class AvatarUploadService {
       mimetype: file.mimetype
     });
 
-    // Quick image format validation using sharp
-    try {
-      const metadata = await sharp(file.buffer).metadata();
-      if (!metadata.width || !metadata.height) {
-        throw new Error('Invalid image: no dimensions detected');
-      }
+    // Quick image format validation using sharp (if available)
+    const sharp = await getSharp();
+    if (sharp) {
+      try {
+        const metadata = await sharp.default(file.buffer).metadata();
+        if (!metadata.width || !metadata.height) {
+          throw new Error('Invalid image: no dimensions detected');
+        }
 
-      if (metadata.width > this.MAX_DIMENSION || metadata.height > this.MAX_DIMENSION) {
-        throw new Error(`Image dimensions too large: ${metadata.width}x${metadata.height}. Maximum allowed: ${this.MAX_DIMENSION}x${this.MAX_DIMENSION}`);
+        if (metadata.width > this.MAX_DIMENSION || metadata.height > this.MAX_DIMENSION) {
+          throw new Error(`Image dimensions too large: ${metadata.width}x${metadata.height}. Maximum allowed: ${this.MAX_DIMENSION}x${this.MAX_DIMENSION}`);
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('Invalid image')) {
+          throw error;
+        }
+        throw new Error('Invalid image format or corrupted file');
       }
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('Invalid image')) {
-        throw error;
-      }
-      throw new Error('Invalid image format or corrupted file');
+    } else {
+      // Skip Sharp validation if not available - basic validation already done
+      console.warn('⚠️ Skipping Sharp validation - module not available');
     }
   }
 
@@ -244,9 +265,15 @@ export class AvatarUploadService {
    * Optimize image for avatar use - in-memory processing
    */
   private async optimizeImage(buffer: Buffer): Promise<Buffer> {
+    const sharp = await getSharp();
+    if (!sharp) {
+      console.warn('⚠️ Sharp not available - skipping image optimization');
+      return buffer; // Return original buffer if Sharp not available
+    }
+
     try {
       // Get original image metadata
-      const metadata = await sharp(buffer).metadata();
+      const metadata = await sharp.default(buffer).metadata();
 
       // Determine optimal format (prefer WebP for better compression)
       const targetFormat = metadata.format === 'jpeg' ? 'webp' as const :
@@ -254,7 +281,7 @@ export class AvatarUploadService {
                           metadata.format as 'jpeg' | 'png' | 'webp';
 
       // Resize if needed, maintaining aspect ratio
-      let processedImage = sharp(buffer);
+      let processedImage = sharp.default(buffer);
 
       // Resize if image is larger than optimal
       if (metadata.width! > this.OPTIMAL_SIZE || metadata.height! > this.OPTIMAL_SIZE) {

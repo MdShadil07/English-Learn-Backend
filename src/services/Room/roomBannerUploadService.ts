@@ -1,7 +1,22 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import sharp from 'sharp';
 import crypto from 'crypto';
 import fs from 'fs';
+
+// Lazy-loaded Sharp module
+let sharpModule: any = null;
+
+async function getSharp() {
+  if (sharpModule === null) {
+    try {
+      sharpModule = await import('sharp');
+      console.log('✅ Sharp module loaded successfully in BannerUploadService');
+    } catch (error) {
+      console.warn('⚠️ Sharp module not available in BannerUploadService - image optimization will be disabled:', (error as Error).message);
+      sharpModule = false; // Mark as failed to avoid repeated attempts
+    }
+  }
+  return sharpModule === false ? null : sharpModule;
+}
 
 /**
  * Service for handling Practice Room banner uploads to Supabase.
@@ -100,10 +115,16 @@ export class RoomBannerUploadService {
   }
 
   private async optimizeBannerImage(file: Express.Multer.File): Promise<Buffer> {
-    try {
-      const metadata = await sharp(file.buffer).metadata();
+    const sharp = await getSharp();
+    if (!sharp) {
+      console.warn('⚠️ Sharp not available in BannerUploadService - skipping image optimization');
+      return file.buffer; // Return original buffer if Sharp not available
+    }
 
-      let processedImage = sharp(file.buffer);
+    try {
+      const metadata = await sharp.default(file.buffer).metadata();
+
+      let processedImage = sharp.default(file.buffer);
 
       // Scale down only if it exceeds max dimensions
       if (metadata.width! > this.MAX_WIDTH || metadata.height! > this.MAX_HEIGHT) {
