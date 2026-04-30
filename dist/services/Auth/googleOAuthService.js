@@ -3,7 +3,7 @@ import { googleOAuthConfig, validateGoogleOAuthConfig } from '../../config/googl
 import { User, RefreshToken } from '../../models/index.js';
 import { generateTokens } from '../../middleware/auth/auth.js';
 import subscriptionService from '../Subscription/subscriptionService.js';
-import { sendEmail } from '../../utils/emailService.js';
+import { queueEmail } from '../Email/emailQueueService.js';
 class GoogleOAuthService {
     oauth2Client;
     constructor() {
@@ -262,22 +262,29 @@ class GoogleOAuthService {
                     lastLoginAt: new Date(),
                 });
                 await user.save();
-                // Send welcome email for first-time sign-up
-                try {
-                    await sendEmail({
-                        to: user.email,
-                        subject: 'Welcome to CognitoSpeak! 🎉',
-                        template: 'welcome',
-                        data: {
-                            userName: user.fullName,
-                            appUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
-                        },
-                    });
-                    console.log('✅ Welcome email sent to:', user.email);
-                }
-                catch (emailError) {
-                    console.error('❌ Failed to send welcome email:', emailError);
-                    // Don't fail the signup if email fails
+                // Send welcome email for first-time sign-up using queue
+                // Only send if welcome email hasn't been sent yet
+                if (!user.welcomeEmailSent) {
+                    try {
+                        await queueEmail({
+                            to: user.email,
+                            subject: 'Welcome to CognitoSpeak! 🎉',
+                            template: 'welcome',
+                            data: {
+                                userName: user.fullName,
+                                appUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
+                            },
+                            priority: 'high', // Welcome emails are high priority
+                        });
+                        console.log('✅ Welcome email queued for:', user.email);
+                        // Mark welcome email as sent
+                        user.welcomeEmailSent = true;
+                        await user.save();
+                    }
+                    catch (emailError) {
+                        console.error('❌ Failed to queue welcome email:', emailError);
+                        // Don't fail the signup if email fails
+                    }
                 }
             }
             // Generate tokens

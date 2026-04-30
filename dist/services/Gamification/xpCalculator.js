@@ -116,7 +116,15 @@ const calculateErrorPenalty = (baseAmount, errorCount = 0, criticalErrorCount = 
     if (baseAmount <= 0) {
         return 0;
     }
-    const weightedErrors = (errorCount * XP_PENALTY_RULES.ERROR_WEIGHT) + (criticalErrorCount * XP_PENALTY_RULES.CRITICAL_ERROR_WEIGHT);
+    // No penalty if there are no errors
+    if (errorCount === 0 && criticalErrorCount === 0) {
+        return 0;
+    }
+    // Ensure error counts are valid numbers
+    const validErrorCount = Number(errorCount) || 0;
+    const validCriticalErrorCount = Number(criticalErrorCount) || 0;
+    // Apply penalty: 2 XP per error, 4 XP per critical error
+    const weightedErrors = (validErrorCount * XP_PENALTY_RULES.ERROR_WEIGHT) + (validCriticalErrorCount * XP_PENALTY_RULES.CRITICAL_ERROR_WEIGHT);
     let penalty = baseAmount * weightedErrors;
     if (accuracy < XP_PENALTY_RULES.LOW_ACCURACY_THRESHOLD) {
         const accuracyGap = XP_PENALTY_RULES.LOW_ACCURACY_THRESHOLD - accuracy;

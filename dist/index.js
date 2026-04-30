@@ -36,6 +36,8 @@ import { monitoringController, metricsMiddleware } from './controllers/Monitorin
 import subscriptionService from './services/Subscription/subscriptionService.js';
 // Import WebSocket service
 import { webSocketService } from './services/WebSocket/socketService.js';
+// Import email queue service
+import { createEmailWorker, shutdownEmailQueue } from './services/Email/emailQueueService.js';
 // Connect to database and cache
 async function initializeServices() {
     try {
@@ -48,6 +50,25 @@ async function initializeServices() {
         catch (error) {
             console.warn('⚠️ Redis not available, running without cache');
             // Don't log the error, just continue without Redis
+        }
+        // Initialize email queue worker if Redis is available
+        if (redisCache.isConnected()) {
+            try {
+                const worker = await createEmailWorker();
+                if (worker) {
+                    console.log('✅ Email queue worker initialized');
+                }
+                else {
+                    console.log('⚠️ Email queue worker not initialized (Redis unavailable)');
+                }
+            }
+            catch (error) {
+                console.warn('⚠️ Email queue worker failed to initialize:', error);
+                // Continue without email queue - emails will be sent synchronously
+            }
+        }
+        else {
+            console.log('⚠️ Redis not available, emails will be sent synchronously');
         }
         console.log('✅ All services initialized successfully');
     }
@@ -158,9 +179,10 @@ async function startServer() {
                     await Promise.all([
                         webSocketService.shutdown(),
                         database.disconnect(),
-                        redisCache.disconnect()
+                        redisCache.disconnect(),
+                        shutdownEmailQueue()
                     ]);
-                    console.log('✅ Database and cache disconnected');
+                    console.log('✅ Database, cache, and email queue disconnected');
                 }
                 catch (error) {
                     console.error('❌ Error during service disconnect:', error);

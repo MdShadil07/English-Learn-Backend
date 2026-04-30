@@ -1,5 +1,5 @@
 import { User } from '../models/index.js';
-import { sendEmail } from '../utils/emailService.js';
+import { queueEmail } from './Email/emailQueueService.js';
 // In-memory storage for verification codes (in production, use Redis or database)
 const verificationCodes = new Map();
 export class EmailVerificationService {
@@ -31,7 +31,7 @@ export class EmailVerificationService {
             };
             verificationCodes.set(code, verificationData);
             // Send verification email
-            await sendEmail({
+            await queueEmail({
                 to: user.email,
                 subject: 'Verify Google Account Linking - English Learning Platform',
                 template: 'google-linking-verification',
@@ -118,7 +118,7 @@ export class EmailVerificationService {
                 if (!user) {
                     return { success: false, message: 'User not found' };
                 }
-                await sendEmail({
+                await queueEmail({
                     to: user.email,
                     subject: 'Resend: Verify Google Account Linking - English Learning Platform',
                     template: 'google-linking-verification',
@@ -170,7 +170,7 @@ export class EmailVerificationService {
             };
             verificationCodes.set(code, verificationData);
             // Send verification email
-            await sendEmail({
+            await queueEmail({
                 to: user.email,
                 subject: 'Verify Google Account Linking - English Learning Platform',
                 template: 'google-linking-verification',
@@ -287,7 +287,7 @@ export class EmailVerificationService {
                 verificationData.expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
                 verificationCodes.set(existingCode, verificationData);
                 // Resend email with existing code
-                await sendEmail({
+                await queueEmail({
                     to: user.email,
                     subject: 'Resend: Verify Google Account Linking - English Learning Platform',
                     template: 'google-linking-verification',

@@ -112,6 +112,13 @@ class SpellingCheckerService {
     isAvailable() {
         return !!(this.dictionary && this.initialized && !this.initializationFailed);
     }
+    /**
+     * Check if spelling checker has a valid dictionary loaded
+     * Returns false if dictionary files are missing or initialization failed
+     */
+    hasValidDictionary() {
+        return this.isAvailable();
+    }
     check(word) {
         // If dictionary isn't available, assume correctness — don't create false negatives.
         if (!this.dictionary)
@@ -282,6 +289,7 @@ class SpellingCheckerService {
                 errorsFound: null,
                 errors: [],
                 source: 'typo-js-unavailable',
+                hasValidDictionary: false,
             };
         }
         // Run analyzeText once and compute accuracy from results to avoid duplicate Typo.js runs
@@ -301,6 +309,7 @@ class SpellingCheckerService {
                 confidence: e.confidence,
             })),
             source: 'typo-js',
+            hasValidDictionary: true,
         };
         if (process.env.NODE_ENV === 'development') {
             console.log(`  ✅ Spelling Report Generated:`);

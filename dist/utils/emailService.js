@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-// Create nodemailer transporter
+// Create nodemailer transporter with production-ready configuration
 const createTransporter = () => {
     // Check if SMTP configuration is available
     const smtpHost = process.env.SMTP_HOST;
@@ -7,7 +7,7 @@ const createTransporter = () => {
     const smtpUser = process.env.SMTP_USER;
     const smtpPass = process.env.SMTP_PASS;
     if (smtpHost && smtpPort && smtpUser && smtpPass) {
-        // Use configured SMTP server
+        // Use configured SMTP server with production settings
         return nodemailer.createTransport({
             host: smtpHost,
             port: parseInt(smtpPort),
@@ -15,6 +15,15 @@ const createTransporter = () => {
             auth: {
                 user: smtpUser,
                 pass: smtpPass,
+            },
+            // Production-ready settings
+            pool: true, // Use connection pooling for better performance
+            maxConnections: 10, // Max 10 concurrent connections
+            maxMessages: 100, // Send max 100 messages per connection
+            rateDelta: 1000, // Rate limit window
+            rateLimit: 10, // Max 10 messages per second
+            tls: {
+                rejectUnauthorized: process.env.NODE_ENV === 'production', // Only verify in production
             },
         });
     }

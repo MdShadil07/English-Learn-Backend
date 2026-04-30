@@ -23,6 +23,11 @@ declare class SpellingCheckerService {
      * Check if a word is spelled correctly
      */
     isAvailable(): boolean;
+    /**
+     * Check if spelling checker has a valid dictionary loaded
+     * Returns false if dictionary files are missing or initialization failed
+     */
+    hasValidDictionary(): boolean;
     check(word: string): boolean;
     /**
      * Get spelling suggestions for a misspelled word
@@ -49,12 +54,14 @@ declare class SpellingCheckerService {
             confidence: number;
         }[];
         source: string;
+        hasValidDictionary: boolean;
     } | {
         accuracy: null;
         totalWords: number;
         errorsFound: null;
         errors: never[];
         source: string;
+        hasValidDictionary: boolean;
     }>;
 }
 export declare const spellingChecker: SpellingCheckerService;

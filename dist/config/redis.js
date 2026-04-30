@@ -31,6 +31,7 @@ class RedisCache {
             });
             // Handle connection events
             this.client.on('connect', () => {
+                console.log('✅ Redis connected');
             });
             this.client.on('error', (error) => {
                 // Only log Redis errors if we're actually trying to use Redis
@@ -41,11 +42,21 @@ class RedisCache {
             this.client.on('close', () => {
                 console.log('📴 Redis connection closed');
             });
-            // Wait for connection
+            // Wait for connection FIRST
             await this.client.connect();
+            console.log('✅ Redis connection established');
+            // Then try to set config (separate from connection - config failure shouldn't mark Redis as unavailable)
+            try {
+                await this.client.config('SET', 'maxmemory-policy', 'noeviction');
+                console.log('✅ Redis maxmemory-policy set to noeviction');
+            }
+            catch (error) {
+                // Config command not supported on managed Redis (Render/Upstash/Redis Cloud) - ignore and continue
+                console.log('⚠️ Redis maxmemory-policy not supported (managed Redis) - continuing with default policy');
+            }
         }
         catch (error) {
-            console.log('🔄 Redis not available, running without cache');
+            console.log('❌ Redis connection failed, running without cache');
             this.client = null;
             // Don't throw error, allow app to continue without Redis
         }

@@ -57,11 +57,15 @@ export declare class FinalWeightedAccuracyService {
     /**
      * 🚀 PRIORITY 2: GRADUATED PENALTY SYSTEM
      * Apply penalty based on error count with graduated thresholds
+     * Scaled by text length to avoid over-penalizing short texts
      * - 15+ errors: -40% penalty
      * - 10-14 errors: -25% penalty
      * - 8-9 errors: -15% penalty
      * - 5-7 errors: -5% penalty
      * - <5 errors: No penalty
+     *
+     * For short texts (<20 words), penalties are reduced by 50%
+     * For very short texts (<10 words), penalties are reduced by 75%
      */
     private applyGraduatedPenalty;
     /**

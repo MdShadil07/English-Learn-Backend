@@ -85,6 +85,20 @@ export interface CategoryMetricMap {
     vocabulary?: VocabularyCategoryMetrics;
     spelling?: SpellingCategoryMetrics;
     pronunciation?: PronunciationCategoryMetrics;
+    coherence?: {
+        score: number;
+        transitions: number;
+        topicConsistency: number;
+        logicalFlow: number;
+        trend?: CategoryTrendInsight;
+    };
+    style?: {
+        score: number;
+        passiveVoiceUsage: number;
+        sentenceVariety: number;
+        formalityScore: number;
+        trend?: CategoryTrendInsight;
+    };
 }
 export interface HistoricalWeightingConfig {
     decayFactor?: number;

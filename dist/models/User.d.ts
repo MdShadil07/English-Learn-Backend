@@ -18,6 +18,7 @@ export interface IUser extends Document {
         linkedBy?: 'manual' | 'sso_first_time' | 'email_verification';
     };
     isEmailVerified: boolean;
+    welcomeEmailSent: boolean;
     lastLoginAt?: Date;
     subscription: {
         planCode: string;

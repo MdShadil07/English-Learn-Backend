@@ -5,6 +5,9 @@ export declare class LanguageToolDetector implements IErrorDetector {
     priority: number;
     private baseURL;
     private cache;
+    private circuitBreaker;
+    private readonly CIRCUIT_BREAKER_THRESHOLD;
+    private readonly CIRCUIT_BREAKER_TIMEOUT;
     constructor(baseURL: string | undefined, cache: ICache);
     detect(text: string, config: AnalysisConfig): Promise<ErrorDetail[]>;
     isAvailable(): Promise<boolean>;

@@ -86,6 +86,10 @@ const userSchema = new Schema({
         default: false,
         index: true,
     },
+    welcomeEmailSent: {
+        type: Boolean,
+        default: false,
+    },
     lastLoginAt: {
         type: Date,
         default: null,

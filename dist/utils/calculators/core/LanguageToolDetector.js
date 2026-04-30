@@ -32,6 +32,14 @@ export class LanguageToolDetector {
     priority = 1;
     baseURL;
     cache;
+    circuitBreaker = {
+        isOpen: false,
+        failureCount: 0,
+        lastFailureTime: 0,
+        nextAttemptTime: 0,
+    };
+    CIRCUIT_BREAKER_THRESHOLD = 5;
+    CIRCUIT_BREAKER_TIMEOUT = 60000; // 1 minute
     constructor(baseURL = process.env.LANGUAGETOOL_URL || 'http://localhost:8081/v2', cache) {
         // ✅ Remove accidental /check suffix and trailing slashes
         this.baseURL = baseURL.replace(/\/check\/?$/, '').replace(/\/+$/, '');
@@ -45,6 +53,20 @@ export class LanguageToolDetector {
         if (cached) {
             nlpLogger.debug({ cacheKey }, 'LanguageTool cache hit');
             return cached;
+        }
+        // 🔹 Step 2: Check circuit breaker
+        if (this.circuitBreaker.isOpen) {
+            const now = Date.now();
+            if (now < this.circuitBreaker.nextAttemptTime) {
+                nlpLogger.warn('LanguageTool circuit breaker is open, skipping API call');
+                return [];
+            }
+            else {
+                // Attempt to reset circuit breaker
+                this.circuitBreaker.isOpen = false;
+                this.circuitBreaker.failureCount = 0;
+                nlpLogger.info('LanguageTool circuit breaker reset, attempting API call');
+            }
         }
         const startTime = Date.now();
         try {
@@ -62,14 +84,25 @@ export class LanguageToolDetector {
             const errors = matches.map(match => this.convertToErrorDetail(match));
             // 🔹 Cache results for 1 hour
             await this.cache.set(cacheKey, errors, 3600);
+            // Reset circuit breaker on success
+            this.circuitBreaker.failureCount = 0;
+            this.circuitBreaker.isOpen = false;
             const duration = Date.now() - startTime;
             nlpLogger.info({ errorCount: errors.length, duration }, 'LanguageTool detection complete');
             return errors;
         }
         catch (error) {
+            // Update circuit breaker state
+            this.circuitBreaker.failureCount++;
+            this.circuitBreaker.lastFailureTime = Date.now();
+            if (this.circuitBreaker.failureCount >= this.CIRCUIT_BREAKER_THRESHOLD) {
+                this.circuitBreaker.isOpen = true;
+                this.circuitBreaker.nextAttemptTime = Date.now() + this.CIRCUIT_BREAKER_TIMEOUT;
+                nlpLogger.error({ failureCount: this.circuitBreaker.failureCount, nextAttemptIn: this.CIRCUIT_BREAKER_TIMEOUT }, 'LanguageTool circuit breaker opened');
+            }
             // ✅ Clean logging of errors
             const url = `${this.baseURL}/check`;
-            nlpLogger.error({ url, message: error.message, code: error.code, status: error.response?.status }, 'LanguageTool API error');
+            nlpLogger.error({ url, message: error.message, code: error.code, status: error.response?.status, failureCount: this.circuitBreaker.failureCount }, 'LanguageTool API error');
             return [];
         }
     }
