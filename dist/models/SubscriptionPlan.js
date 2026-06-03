@@ -54,7 +54,6 @@ const subscriptionPlanSchema = new Schema({
     timestamps: true,
 });
 // Indexes
-subscriptionPlanSchema.index({ code: 1 }, { unique: true });
 subscriptionPlanSchema.index({ isActive: 1 });
 subscriptionPlanSchema.index({ tier: 1 });
 // Static methods

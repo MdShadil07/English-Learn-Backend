@@ -18,34 +18,52 @@ export class RoomService {
      * Create a new practice room
      */
     async createRoom(data) {
-        const { hostId, topic, description, banner, bannerText, bannerFontFamily, bannerIsBold, bannerIsItalic, bannerFontSize, maxParticipants = 500, isPrivate = false } = data;
-        if (maxParticipants < 1 || maxParticipants > 500) {
-            throw new Error('Maximum participants must be between 1 and 500');
+        try {
+            const { hostId, topic, description, banner, bannerText, bannerFontFamily, bannerIsBold, bannerIsItalic, bannerFontSize, maxParticipants = 500, isPrivate = false, mode = 'classroom' } = data;
+            if (maxParticipants < 1 || maxParticipants > 500) {
+                throw new Error('Maximum participants must be between 1 and 500');
+            }
+            const roomId = generateRoomId();
+            // Generate a unique 6-char code for private rooms
+            const roomCode = isPrivate ? generateRoomCode() : undefined;
+            const room = new Room({
+                roomId,
+                roomCode,
+                topic: topic?.substring(0, 100) || 'English Practice Room',
+                description: description?.substring(0, 500),
+                banner,
+                bannerText,
+                bannerFontFamily,
+                bannerIsBold,
+                bannerIsItalic,
+                bannerFontSize,
+                hostId: new Types.ObjectId(hostId),
+                maxParticipants,
+                isPrivate,
+                mode,
+                status: 'active',
+            });
+            await room.save();
+            await RoomParticipantModel.create({ roomId, userId: new Types.ObjectId(hostId) });
+            try {
+                await sfuMappingService.assignRoomToSFUServer(roomId);
+            }
+            catch (sfuError) {
+                console.warn(`[RoomService] Failed to assign SFU to room ${roomId}:`, sfuError);
+                // Do not throw, allow room creation to succeed
+            }
+            try {
+                await webSocketService.notifyRoomCreated(roomId, hostId);
+            }
+            catch (wsError) {
+                console.warn(`[RoomService] Failed to notify websocket for room ${roomId}:`, wsError);
+            }
+            return await this.formatRoomDetails(room, hostId);
         }
-        const roomId = generateRoomId();
-        // Generate a unique 6-char code for private rooms
-        const roomCode = isPrivate ? generateRoomCode() : undefined;
-        const room = new Room({
-            roomId,
-            roomCode,
-            topic,
-            description,
-            banner,
-            bannerText,
-            bannerFontFamily,
-            bannerIsBold,
-            bannerIsItalic,
-            bannerFontSize,
-            hostId: new Types.ObjectId(hostId),
-            maxParticipants,
-            isPrivate,
-            status: 'active',
-        });
-        await room.save();
-        await RoomParticipantModel.create({ roomId, userId: new Types.ObjectId(hostId) });
-        await sfuMappingService.assignRoomToSFUServer(roomId);
-        await webSocketService.notifyRoomCreated(roomId, hostId);
-        return await this.formatRoomDetails(room, hostId);
+        catch (error) {
+            console.error('[RoomService] createRoom error:', error);
+            throw error;
+        }
     }
     /**
      * Join an existing room
@@ -206,9 +224,12 @@ export class RoomService {
      */
     async formatRoomDetails(room, requestingUserId) {
         const participantRecords = await RoomParticipantModel.find({ roomId: room.roomId }).sort({ joinedAt: 1 });
-        const participantIds = participantRecords.map(p => p.userId);
-        const users = await User.find({ _id: { $in: participantIds } }).select('_id username firstName lastName');
-        const profiles = await UserProfile.find({ userId: { $in: participantIds } }).select('userId avatar_url');
+        const participantIdsStr = participantRecords.map(p => p.userId.toString());
+        const hostIdStr = room.hostId.toString();
+        const allUserIdsStr = [...new Set([...participantIdsStr, hostIdStr])];
+        const allUserIds = allUserIdsStr.map(id => new Types.ObjectId(id));
+        const users = await User.find({ _id: { $in: allUserIds } }).select('_id username firstName lastName');
+        const profiles = await UserProfile.find({ userId: { $in: allUserIds } }).select('userId avatar_url');
         const userMap = new Map();
         const profileMap = new Map();
         users.forEach((u) => {
@@ -218,7 +239,7 @@ export class RoomService {
             });
         });
         profiles.forEach((p) => { profileMap.set(p.userId.toString(), p.avatar_url); });
-        const participants = participantIds.map((id) => {
+        const participants = participantRecords.map(p => p.userId).map((id) => {
             const idStr = id.toString();
             const u = userMap.get(idStr);
             return { userId: idStr, username: u?.username, fullName: u?.fullName, avatar: profileMap.get(idStr) };
@@ -241,6 +262,9 @@ export class RoomService {
                 return { userId: idStr, username: u?.username, fullName: u?.fullName, avatar: bProfileMap.get(idStr) };
             });
         }
+        const hostUser = userMap.get(hostIdStr);
+        const hostAvatar = profileMap.get(hostIdStr);
+        const hostName = hostUser?.fullName || hostUser?.username || 'Host';
         return {
             roomId: room.roomId,
             // Only expose roomCode and blockedUsers to the host
@@ -254,7 +278,9 @@ export class RoomService {
             bannerIsBold: room.bannerIsBold,
             bannerIsItalic: room.bannerIsItalic,
             bannerFontSize: room.bannerFontSize,
-            hostId: room.hostId.toString(),
+            hostId: hostIdStr,
+            hostName,
+            hostAvatar,
             moderators: (room.moderators || []).map((id) => id.toString()),
             participants,
             maxParticipants: room.maxParticipants,
@@ -262,9 +288,10 @@ export class RoomService {
             isLocked: room.isLocked || false,
             status: room.status,
             createdAt: room.createdAt,
-            participantCount: participantIds.length,
-            isFull: participantIds.length >= room.maxParticipants,
+            participantCount: participantRecords.length,
+            isFull: participantRecords.length >= room.maxParticipants,
             sfuUrl,
+            mode: room.mode || 'classroom',
         };
     }
 }

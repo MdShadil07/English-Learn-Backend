@@ -187,7 +187,9 @@ class EnhancedStreakService {
         }
         // Save to database
         await progress.save();
-        logger.info({ userId: progress.userId.toString() }, '💾 Streak saved to database');
+        const userId = progress.userId;
+        const tier = userId?.tier || 'premium';
+        logger.info({ userId: userId.toString() }, '💾 Streak saved to database');
     }
     /**
      * Create new Progress document for user

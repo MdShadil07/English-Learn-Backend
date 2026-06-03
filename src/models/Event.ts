@@ -24,12 +24,10 @@ const eventSchema = new Schema<IEvent, IEventModel>(
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: [true, 'User ID is required'],
-      index: true,
     },
     subscriptionId: {
       type: Schema.Types.ObjectId,
       ref: 'Subscription',
-      index: true,
     },
     metadata: {
       type: Schema.Types.Mixed,
@@ -42,7 +40,6 @@ const eventSchema = new Schema<IEvent, IEventModel>(
 
 // Indexes
 eventSchema.index({ userId: 1, createdAt: -1 });
-eventSchema.index({ type: 1 });
 
 const Event: IEventModel = mongoose.model<IEvent, IEventModel>('Event', eventSchema);
 

@@ -7,6 +7,8 @@ export interface IUser extends Document {
     lastName?: string;
     username?: string;
     role: 'student' | 'teacher' | 'admin';
+    accountStatus: 'active' | 'suspended' | 'banned' | 'deleted';
+    statusReason?: string;
     googleAuth?: {
         googleId: string;
         accessToken?: string;
@@ -17,9 +19,14 @@ export interface IUser extends Document {
         linkedAt?: Date;
         linkedBy?: 'manual' | 'sso_first_time' | 'email_verification';
     };
+    resetPasswordToken?: string;
+    resetPasswordExpires?: Date;
     isEmailVerified: boolean;
     welcomeEmailSent: boolean;
+    isVerified?: boolean;
+    verificationStatus?: 'none' | 'pending' | 'verified' | 'rejected';
     lastLoginAt?: Date;
+    lastActiveAt?: Date;
     subscription: {
         planCode: string;
         status: 'active' | 'expired' | 'none';
@@ -30,9 +37,27 @@ export interface IUser extends Document {
     createdAt: Date;
     updatedAt: Date;
     fullName: string;
-    tier: 'free' | 'pro' | 'premium';
+    tier: {
+        type: String;
+        enum: ['free', 'pro', 'premium'];
+        default: 'premium';
+    };
     subscriptionStatus: 'active' | 'expired' | 'none';
     subscriptionEndDate?: Date | null;
+    pronunciationProfile?: {
+        accentLocale: string;
+        weakPhonemes: Array<{
+            phoneme: string;
+            score: number;
+            updatedAt: Date;
+        }>;
+        speechProfile: {
+            averagePronunciationScore: number;
+            averageWordsPerMinute: number;
+            averageAsrConfidence: number;
+            lastProcessedAt?: Date | null;
+        };
+    };
     comparePassword(candidatePassword: string): Promise<boolean>;
     getFullName(): string;
     toJSON(): any;

@@ -4,6 +4,7 @@ import { IErrorDetector, ICache } from './interface.js';
 import { ErrorDetail, AnalysisConfig, LanguageToolMatch, ErrorType, ErrorSeverity } from './types.js';
 import { nlpLogger } from './logger.js';
 import { NLP_TIMEOUTS } from './constants.js';
+import { telemetryService } from '../../../services/telemetryService.js';
 
 const CRITICAL_RULE_PATTERNS: RegExp[] = [
   /\bsubject[-_\s]?verb\b/, // subject-verb agreement
@@ -105,6 +106,7 @@ export class LanguageToolDetector implements IErrorDetector {
         timeout: NLP_TIMEOUTS.LANGUAGETOOL || 5000,
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       });
+      telemetryService.recordServiceCall('languagetool', Date.now() - startTime, false);
 
       const matches: LanguageToolMatch[] = response.data.matches || [];
       const errors = matches.map(match => this.convertToErrorDetail(match));
@@ -121,6 +123,7 @@ export class LanguageToolDetector implements IErrorDetector {
 
       return errors;
     } catch (error: any) {
+      telemetryService.recordServiceCall('languagetool', Date.now() - startTime, true);
       // Update circuit breaker state
       this.circuitBreaker.failureCount++;
       this.circuitBreaker.lastFailureTime = Date.now();

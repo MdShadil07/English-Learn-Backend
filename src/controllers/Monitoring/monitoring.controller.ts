@@ -3,6 +3,7 @@ import os from 'os';
 import v8 from 'v8';
 import { database } from '../../config/database.js';
 import { redisCache } from '../../config/redis.js';
+import { telemetryService } from '../../services/telemetryService.js';
 
 // Metrics storage for load testing
 interface MetricsStore {
@@ -37,8 +38,15 @@ export const metricsMiddleware = (req: Request, res: Response, next: Function) =
     const duration = Date.now() - startTime;
     metricsStore.requestCount++;
     metricsStore.totalResponseTime += duration;
+    const isError = res.statusCode >= 400;
+
+    telemetryService.recordServiceCall('main-backend', duration, isError);
+
+    if (req.path.startsWith('/api/rooms')) {
+      telemetryService.recordServiceCall('main-sfu', duration, isError);
+    }
     
-    if (res.statusCode >= 400) {
+    if (isError) {
       metricsStore.errorCount++;
     }
   });
@@ -88,6 +96,11 @@ interface HealthCheck {
       status: 'healthy' | 'degraded' | 'unhealthy';
       usage: number;
       load: number[];
+    };
+    speechWorker?: {
+      status: 'healthy' | 'degraded' | 'unhealthy';
+      responseTime?: number;
+      modelLoaded?: boolean;
     };
   };
   version: string;
@@ -153,6 +166,40 @@ export class MonitoringController {
       } else {
         healthCheck.services.redis.status = 'unhealthy';
         healthCheck.status = 'degraded';
+      }
+
+      // Check speech worker health
+      try {
+        const speechWorkerUrl = process.env.SPEECH_WORKER_URL || 'http://localhost:8001';
+        const speechWorkerStartTime = Date.now();
+        const response = await fetch(`${speechWorkerUrl}/health`, {
+          signal: AbortSignal.timeout(5000)
+        });
+        const speechWorkerResponseTime = Date.now() - speechWorkerStartTime;
+        
+        if (response.ok) {
+          const data = await response.json() as { status?: string; model_loaded?: boolean };
+          healthCheck.services.speechWorker = {
+            status: data.status === 'healthy' ? 'healthy' : 'degraded',
+            responseTime: speechWorkerResponseTime,
+            modelLoaded: data.model_loaded
+          };
+          
+          if (speechWorkerResponseTime > 2000) {
+            healthCheck.services.speechWorker.status = 'degraded';
+          }
+        } else {
+          healthCheck.services.speechWorker = {
+            status: 'unhealthy',
+            responseTime: speechWorkerResponseTime
+          };
+        }
+      } catch (error) {
+        healthCheck.services.speechWorker = {
+          status: 'unhealthy',
+          modelLoaded: false
+        };
+        console.warn('Speech worker health check failed:', error instanceof Error ? error.message : String(error));
       }
 
       // Check memory usage

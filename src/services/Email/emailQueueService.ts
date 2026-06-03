@@ -61,17 +61,20 @@ const isRedisAvailable = () => redisCache.isConnected();
  * Falls back to synchronous sending if Redis is not available
  */
 export async function queueEmail(data: EmailJobData): Promise<Job<EmailJobData> | null> {
-  // If Redis is not available, send email synchronously as fallback
+  // If Redis is not available, send email in background (fire-and-forget) to avoid blocking
   if (!isRedisAvailable() || !redisCache.getClient()) {
-    console.log(`⚠️ Redis not available, sending email synchronously to: ${data.to}`);
-    try {
-      await sendEmail(data);
-      console.log(`✅ Email sent synchronously to: ${data.to}`);
-      return null;
-    } catch (error) {
-      console.error(`❌ Failed to send email synchronously to: ${data.to}`, error);
-      throw error;
-    }
+    console.log(`⚠️ Redis not available, sending email in background to: ${data.to}`);
+    
+    // Fire and forget
+    sendEmail(data)
+      .then(() => {
+        console.log(`✅ Email sent in background to: ${data.to}`);
+      })
+      .catch((error) => {
+        console.error(`❌ Failed to send email in background to: ${data.to}`, error);
+      });
+      
+    return null;
   }
 
   const priority = data.priority === 'high' ? EMAIL_PRIORITY.HIGH :
@@ -96,21 +99,21 @@ export async function queueEmail(data: EmailJobData): Promise<Job<EmailJobData> 
  * Falls back to synchronous sending if Redis is not available
  */
 export async function queueBulkEmails(emails: EmailJobData[]): Promise<(Job<EmailJobData> | null)[]> {
-  // If Redis is not available, send emails synchronously
+  // If Redis is not available, send emails in background (fire-and-forget) to avoid blocking
   if (!isRedisAvailable() || !emailQueue) {
-    console.log(`⚠️ Redis not available, sending ${emails.length} emails synchronously`);
-    const results = [];
+    console.log(`⚠️ Redis not available, sending ${emails.length} emails in background`);
+    
     for (const email of emails) {
-      try {
-        await sendEmail(email);
-        results.push(null);
-      } catch (error) {
-        console.error(`❌ Failed to send email to: ${email.to}`, error);
-        results.push(null);
-      }
+      sendEmail(email)
+        .then(() => {
+          console.log(`✅ Email sent in background to: ${email.to}`);
+        })
+        .catch((error) => {
+          console.error(`❌ Failed to send email in background to: ${email.to}`, error);
+        });
     }
-    console.log(`✅ ${emails.length} emails sent synchronously`);
-    return results;
+    
+    return Array(emails.length).fill(null);
   }
 
   const jobs = await emailQueue.addBulk(

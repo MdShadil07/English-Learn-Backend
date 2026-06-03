@@ -40,21 +40,20 @@ loadCEFRDataset();
 // Optional: use wink-lemmatizer when available to normalize words before CEFR lookup
 let lemmatizeWord: ((w: string) => string) | null = null;
 try {
-  // dynamic require/import — don't crash if the package isn't installed
-  // wink-lemmatizer commonly exports functions; try to import and use `.word` if available
-  // We avoid top-level async import for compatibility; require via eval-style import
-   
-  // (Wrap in try/catch to keep fallback behavior if not installed)
-  // Note: during runtime in ESM environments, `require` may be unavailable — this will be ignored.
-  // We'll attempt dynamic import below inside analyze() as well just in case.
-  // Keep a conservative, non-failing attempt here.
   // @ts-ignore
   const maybe = (typeof require === 'function') ? require('wink-lemmatizer') : null;
-  if (maybe && typeof maybe.word === 'function') {
-    lemmatizeWord = (w: string) => maybe.word(w.toLowerCase());
+  if (maybe && typeof maybe.verb === 'function') {
+    lemmatizeWord = (w: string) => {
+      const lower = w.toLowerCase();
+      const v = maybe.verb(lower);
+      if (v !== lower) return v;
+      const n = maybe.noun(lower);
+      if (n !== lower) return n;
+      return maybe.adjective(lower);
+    };
   }
 } catch (e) {
-  // ignore — we'll try dynamic import in analyze()
+  // ignore
 }
 
 // CEFR Level word lists (Common English words by proficiency level)
@@ -305,21 +304,21 @@ const CEFR_SYNONYM_GROUPS: Array<{
   level: keyof typeof CEFR_WORDLISTS;
   synonyms: string[];
 }> = [
-  {
-    base: 'offer',
-    level: 'A2',
-    synonyms: ['propose', 'present', 'provide', 'extend', 'tender', 'suggest'],
-  },
-  {
-    base: 'taken',
-    level: 'B1',
-    synonyms: ['accepted', 'assumed', 'captured', 'seized', 'claimed', 'acquired'],
-  },
-  {
-    base: 'would',
-    level: 'A2',
-    synonyms: ['might', 'could', 'should', 'intend', 'plan'],
-  },
+  { base: 'good', level: 'A1', synonyms: ['excellent', 'outstanding', 'superb', 'exceptional', 'marvelous'] },
+  { base: 'bad', level: 'A1', synonyms: ['terrible', 'awful', 'dreadful', 'appalling', 'atrocious'] },
+  { base: 'happy', level: 'A1', synonyms: ['delighted', 'thrilled', 'ecstatic', 'elated', 'joyful'] },
+  { base: 'sad', level: 'A1', synonyms: ['miserable', 'depressed', 'devastated', 'heartbroken', 'sorrowful'] },
+  { base: 'big', level: 'A1', synonyms: ['enormous', 'massive', 'gigantic', 'colossal', 'substantial'] },
+  { base: 'small', level: 'A1', synonyms: ['tiny', 'minuscule', 'compact', 'insignificant', 'microscopic'] },
+  { base: 'very', level: 'A1', synonyms: ['extremely', 'exceptionally', 'exceedingly', 'remarkably', 'profoundly'] },
+  { base: 'important', level: 'A1', synonyms: ['crucial', 'vital', 'essential', 'significant', 'paramount'] },
+  { base: 'interesting', level: 'A1', synonyms: ['fascinating', 'captivating', 'intriguing', 'compelling', 'engaging'] },
+  { base: 'say', level: 'A1', synonyms: ['state', 'declare', 'express', 'articulate', 'mention'] },
+  { base: 'think', level: 'A1', synonyms: ['believe', 'consider', 'reckon', 'assume', 'presume'] },
+  { base: 'look', level: 'A1', synonyms: ['observe', 'examine', 'inspect', 'glance', 'stare'] },
+  { base: 'show', level: 'A1', synonyms: ['demonstrate', 'illustrate', 'display', 'reveal', 'exhibit'] },
+  { base: 'use', level: 'A1', synonyms: ['utilize', 'employ', 'apply', 'implement', 'adopt'] },
+  { base: 'help', level: 'A1', synonyms: ['assist', 'support', 'aid', 'facilitate', 'collaborate'] },
 ];
 
 const CEFR_SYNONYM_LOOKUP: Record<string, string[]> = {};
@@ -339,6 +338,26 @@ export const CEFR_COMBINED_WORDSET: Set<string> = (() => {
   return combined;
 })();
 
+export const ACADEMIC_WORDS = new Set([
+  'analyze', 'approach', 'area', 'assess', 'assume', 'authority', 'available',
+  'benefit', 'concept', 'consistent', 'constitutional', 'context', 'contract',
+  'create', 'data', 'define', 'derive', 'distribute', 'economy', 'environment',
+  'establish', 'estimate', 'evidence', 'export', 'factors', 'finance', 'formula',
+  'function', 'identify', 'income', 'indicate', 'individual', 'interpret', 'involve',
+  'issue', 'labor', 'legal', 'legislate', 'major', 'method', 'occur', 'percent',
+  'period', 'policy', 'principle', 'proceed', 'process', 'require', 'research',
+  'respond', 'role', 'section', 'sector', 'significant', 'similar', 'source',
+  'specific', 'structure', 'theory', 'vary', 'achieve', 'acquire', 'administrate',
+  'affect', 'appropriate', 'aspect', 'assist', 'category', 'chapter', 'commission',
+  'community', 'complex', 'compute', 'conclude', 'conduct', 'consequent', 'construct',
+  'consume', 'credit', 'cultural', 'design', 'distinct', 'element', 'equation',
+  'evaluate', 'feature', 'final', 'focus', 'impact', 'injure', 'institute',
+  'invest', 'item', 'journal', 'maintain', 'normal', 'obtain', 'participate',
+  'perceive', 'positive', 'potential', 'previous', 'primary', 'purchase', 'range',
+  'region', 'regulate', 'relevant', 'reside', 'resource', 'restrict', 'secure',
+  'seek', 'select', 'site', 'strategy', 'survey', 'text', 'tradition', 'transfer'
+]);
+
 interface VocabularyAnalysis {
   level: string; // A1, A2, B1, B2, C1, C2
   score: number; // 0-100
@@ -357,6 +376,8 @@ interface VocabularyAnalysis {
     unknown: number;
   };
   suggestions: string[];
+  academicWordUsage?: number;
+  rareWordUsage?: number;
 }
 
 class VocabularyAnalyzerService {
@@ -560,8 +581,15 @@ class VocabularyAnalyzerService {
       if (!lemmatizeWord) {
         try {
           const mod = await import('wink-lemmatizer');
-          if (mod && typeof (mod as any).word === 'function') {
-            lemmatizeWord = (w: string) => (mod as any).word(w.toLowerCase());
+          if (mod && typeof (mod as any).verb === 'function') {
+            lemmatizeWord = (w: string) => {
+              const lower = w.toLowerCase();
+              const v = (mod as any).verb(lower);
+              if (v !== lower) return v;
+              const n = (mod as any).noun(lower);
+              if (n !== lower) return n;
+              return (mod as any).adjective(lower);
+            };
           }
         } catch (e) {
           // not installed — continue with heuristic lemmatization
@@ -663,36 +691,30 @@ class VocabularyAnalyzerService {
       const averageWordLength = totalWords > 0
         ? rawWords.reduce((sum: number, token: string) => sum + token.length, 0) / totalWords
         : 0;
-    const lexicalDiversity = this.calculateLexicalDiversity(normalizedWords);
-    const complexWords = distribution.B2 + distribution.C1 + distribution.C2;
+      const lexicalDiversity = this.calculateLexicalDiversity(normalizedWords);
+      const complexWords = distribution.B2 + distribution.C1 + distribution.C2;
+      
+      let academicWordCount = 0;
+      normalizedWords.forEach((w) => {
+        if (ACADEMIC_WORDS.has(w.toLowerCase())) {
+          academicWordCount++;
+        }
+      });
+      const academicWordUsage = totalWords > 0 ? (academicWordCount / totalWords) * 100 : 0;
+      const rareWordUsage = totalWords > 0 ? ((distribution.C1 + distribution.C2) / totalWords) * 100 : 0;
+
       const overallLevel = this.determineOverallLevel(distribution);
       
-      // Calculate score (0-100) with stricter unknown word penalty
-      const levelScores = { A1: 40, A2: 55, B1: 70, B2: 80, C1: 90, C2: 95 };
-      let baseScore = levelScores[overallLevel as keyof typeof levelScores] || 50;
+      // Calculate score (0-100)
+      // Re-calibrated for conversational English: Simple but correct vocabulary should yield a passing score.
+      const levelScores = { A1: 65, A2: 75, B1: 85, B2: 92, C1: 96, C2: 100 };
+      let baseScore = levelScores[overallLevel as keyof typeof levelScores] || 65;
 
-      // Heavy penalty for unknown words (not in any CEFR list)
       const unknownRatio = distribution.unknown / normalizedWords.length;
       const advancedCount = distribution.B2 + distribution.C1 + distribution.C2;
       const advancedRatio = advancedCount / normalizedWords.length;
       const longWordCount = wordLevels.filter(({ word }) => word.length >= 8).length;
       let longWordRatio = longWordCount / normalizedWords.length;
-
-      // Apply penalty for any unknown words above 5%
-      if (unknownRatio > 0.05) {
-        baseScore -= unknownRatio * 50;
-      }
-
-      if (unknownRatio > 0.82) {
-        // 82%+ unknown = critically low vocabulary (32-42 range)
-        baseScore = Math.max(32, 52 - (unknownRatio * 38));
-      } else if (unknownRatio > 0.65) {
-        // 65-82% unknown = very low vocabulary (45-58 range)
-        baseScore = Math.max(45, 68 - (unknownRatio * 30));
-      } else if (unknownRatio > 0.4) {
-        // 40-65% unknown = moderate penalty
-        baseScore = baseScore * (1 - (Math.max(0, unknownRatio - 0.25) * 0.22));
-      }
 
       // Only apply the fallback CEFR 'boost' for longer texts — disable for short inputs
       if (unknownRatio > 0.6 && totalWords > 25) {
@@ -704,10 +726,10 @@ class VocabularyAnalyzerService {
         }).length / Math.max(1, distribution.unknown);
 
         const fallbackScore =
-          58 +
-          Math.min(0.45, advancedRatio) * 70 +
-          Math.min(0.4, longWordRatio) * 40 +
-          inferredAcademicDensity * 24;
+          65 +
+          Math.min(0.45, advancedRatio) * 60 +
+          Math.min(0.4, longWordRatio) * 30 +
+          inferredAcademicDensity * 20;
 
         baseScore = Math.max(baseScore, Math.min(95, fallbackScore));
       }
@@ -727,13 +749,15 @@ class VocabularyAnalyzerService {
         // Strict cap as requested
         if (diversityBonus > 6) diversityBonus = 6;
       }
-      const penaltyAllowance = 0.35;
+      
+      // Allow up to 15% unknown words (names, slang, etc) without penalty
+      const penaltyAllowance = 0.15;
       const effectiveUnknown = Math.max(0, adjustedUnknownCount - safeTokenCount * penaltyAllowance);
       const unknownPenalty = effectiveUnknown / safeTokenCount;
-        // Increase unknown-word penalty severity (points)
-        let penaltyPoints = unknownPenalty * 60;
-        // Cap unknown-word penalty to avoid exceeding -30 points
-        if (penaltyPoints > 30) penaltyPoints = 30;
+      // Reduced penalty severity
+      let penaltyPoints = unknownPenalty * 30;
+      // Cap unknown-word penalty to avoid exceeding -20 points
+      if (penaltyPoints > 20) penaltyPoints = 20;
 
       const rawScore = baseScore + diversityBonus - penaltyPoints;
   const score = Math.max(0, Math.min(100, rawScore));
@@ -811,6 +835,8 @@ class VocabularyAnalyzerService {
         complexWords,
         cefrDistribution: distribution,
         suggestions,
+        academicWordUsage: Math.round(academicWordUsage * 100) / 100,
+        rareWordUsage: Math.round(rareWordUsage * 100) / 100,
       };
     } catch (error) {
       logger.error({ error }, 'Error analyzing vocabulary');
@@ -851,23 +877,29 @@ class VocabularyAnalyzerService {
 
     let synonymHintCount = 0;
     for (const [base, synonyms] of Object.entries(CEFR_SYNONYM_LOOKUP)) {
-      if (synonymHintCount >= 2) {
-        break;
-      }
+      if (synonymHintCount >= 3) break; // Suggest up to 3 synonyms
 
       const baseUsed = normalizedSet.has(base);
-      const synonymUsed = synonyms.some((synonym) => normalizedSet.has(synonym));
-      if (!baseUsed && !synonymUsed) {
-        continue;
-      }
+      if (!baseUsed) continue;
 
       const unusedSynonyms = synonyms.filter((synonym) => !normalizedSet.has(synonym)).slice(0, 3);
-      if (unusedSynonyms.length === 0) {
-        continue;
-      }
+      if (unusedSynonyms.length === 0) continue;
 
-      suggestions.push(`Try alternatives for "${base}" such as ${unusedSynonyms.join(', ')}.`);
+      suggestions.push(`Instead of "${base}", consider using advanced alternatives like: ${unusedSynonyms.join(', ')}.`);
       synonymHintCount += 1;
+    }
+
+    if (diversity > 0.7) {
+      suggestions.push('Excellent vocabulary diversity! You use a wide range of unique words.');
+    } else if (diversity < 0.4) {
+      suggestions.push('Try using more varied vocabulary. Repeating the same words lowers your score.');
+    }
+
+    const academicPercentage = (distribution.B2 + distribution.C1 + distribution.C2) / Math.max(1, total) * 100;
+    if (academicPercentage > 15) {
+      suggestions.push('Great use of advanced academic words (B2-C2 levels). This shows strong proficiency.');
+    } else if (academicPercentage < 5 && level !== 'A1') {
+      suggestions.push('Try incorporating more advanced academic vocabulary to elevate your writing.');
     }
 
     return Array.from(new Set(suggestions));

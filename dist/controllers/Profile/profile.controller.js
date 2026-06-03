@@ -3,7 +3,7 @@ import { User, UserProfile } from '../../models/index.js';
 import { profileService } from '../../services/Profile/profileService.js';
 import { webSocketService } from '../../services/WebSocket/socketService.js';
 import { Types } from 'mongoose';
-const USER_RESPONSE_FIELDS = 'email firstName lastName username role tier subscriptionStatus subscriptionPlan subscriptionStartDate subscriptionEndDate createdAt updatedAt googleAuth';
+const USER_RESPONSE_FIELDS = 'email firstName lastName username role tier subscriptionStatus subscriptionPlan subscriptionStartDate subscriptionEndDate createdAt updatedAt googleAuth isVerified verificationStatus';
 const sanitizeValue = (value) => {
     if (value === null || value === undefined) {
         return undefined;
@@ -312,6 +312,8 @@ export class ProfileController {
                         lastName: user.lastName,
                         username: user.username,
                         role: user.role,
+                        isVerified: user.isVerified,
+                        verificationStatus: user.verificationStatus,
                         createdAt: user.createdAt,
                         updatedAt: user.updatedAt,
                         fullName: user.getFullName(),

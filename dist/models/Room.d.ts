@@ -11,6 +11,7 @@ export interface IRoom extends Document {
     bannerIsBold?: boolean;
     bannerIsItalic?: boolean;
     bannerFontSize?: number;
+    mode?: 'smallGroup' | 'classroom' | 'webinar';
     hostId: mongoose.Types.ObjectId;
     maxParticipants: number;
     isPrivate: boolean;

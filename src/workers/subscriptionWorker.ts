@@ -4,7 +4,24 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const connection = new (IORedis as any)(process.env.REDIS_URL || 'redis://localhost:6379');
+const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+
+const redisOptions = {
+  lazyConnect: true,
+  maxRetriesPerRequest: null,
+  enableReadyCheck: true,
+  connectTimeout: 5000,
+  retryStrategy: (times: number) => Math.min(times * 50, 2000),
+  reconnectOnError: (_err: any) => true,
+};
+
+const connection = new (IORedis as any)(redisUrl, redisOptions);
+
+connection.on('error', (err: any) => {
+  console.error('[Redis:subscriptionWorker] error', err);
+});
+connection.on('connect', () => console.log('[Redis:subscriptionWorker] connect'));
+connection.on('close', () => console.log('[Redis:subscriptionWorker] connection closed'));
 
 const worker = new Worker('subscription-tasks', async (job) => {
   if (job.name === 'expire-subscription') {
@@ -22,7 +39,7 @@ const worker = new Worker('subscription-tasks', async (job) => {
         return;
       }
       await Subscription.findByIdAndUpdate(subscriptionId, { status: 'expired' });
-      await User.findByIdAndUpdate(s.userId, { subscriptionStatus: 'expired', tier: 'free', subscriptionEndDate: s.endDate });
+      await User.findByIdAndUpdate(s.userId, { 'subscription.status': 'expired', tier: 'free', 'subscription.expiresAt': s.expiresAt });
       console.log('Expired subscription', subscriptionId);
     } catch (err) {
       console.error('Error processing expire-subscription job', err);
@@ -43,7 +60,7 @@ const worker = new Worker('subscription-tasks', async (job) => {
       }
 
       // If no razorpay subscription id, nothing to retry
-      if (!s.razorpaySubscriptionId) {
+      if (!s.razorpay?.subscriptionId) {
         console.warn('Retry job: no razorpay subscription id for', subscriptionId);
         return;
       }
@@ -51,7 +68,7 @@ const worker = new Worker('subscription-tasks', async (job) => {
       // Fetch latest subscription from Razorpay
       let remoteSub: any = null;
       try {
-        remoteSub = await razorpaySub.fetchSubscription(String(s.razorpaySubscriptionId));
+        remoteSub = await razorpaySub.fetchSubscription(String(s.razorpay?.subscriptionId));
       } catch (fetchErr) {
         console.error('Retry job: failed to fetch razorpay subscription', fetchErr);
       }
@@ -84,7 +101,7 @@ const worker = new Worker('subscription-tasks', async (job) => {
         // Exhausted retries: mark subscription expired and downgrade user
         try {
           await Subscription.findByIdAndUpdate(subscriptionId, { status: 'expired' });
-          await User.findByIdAndUpdate(s.userId, { subscriptionStatus: 'expired', tier: 'free' });
+          await User.findByIdAndUpdate(s.userId, { 'subscription.status': 'expired', tier: 'free' });
           console.log('Retry job: exhausted retries, expired subscription', subscriptionId);
         } catch (finalErr) {
           console.error('Retry job: failed to expire subscription', finalErr);

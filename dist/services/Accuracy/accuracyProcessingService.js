@@ -179,6 +179,9 @@ const buildProgressPayload = (accuracy, analysis, cacheSummary, latestSnapshotAc
         lastCalculated: new Date(),
         calculationCount: resolvedCalculationCount,
         latestSnapshot: buildLatestSnapshot(snapshotSource),
+        readabilityScore: analysis.readability?.fleschReadingEase ?? 0,
+        toneScore: analysis.tone?.formalityScore ?? 0,
+        styleScore: analysis.style?.passiveVoiceUsage ?? 0,
     };
     if (cacheMetadata) {
         payload.cache = cacheMetadata;
@@ -186,7 +189,7 @@ const buildProgressPayload = (accuracy, analysis, cacheSummary, latestSnapshotAc
     return payload;
 };
 export async function processAccuracyRequest(params) {
-    const { userId, userMessage, aiResponse = '', userTier, userLevel, previousAccuracy, historicalWeighting, } = params;
+    const { userId, userMessage, aiResponse = '', userTier, userLevel, previousAccuracy, historicalWeighting, persistToDatabase, aiPersonality } = params;
     if (!userMessage || typeof userMessage !== 'string') {
         throw new Error('userMessage is required for accuracy processing');
     }
@@ -297,6 +300,7 @@ export async function processAccuracyRequest(params) {
         proficiencyLevel: userLevel,
         previousAccuracy: baselineAccuracy,
         userId,
+        aiPersonality,
         enableWeightedCalculation: Boolean(userId),
         enableNLP: !skipEnglishChecks,
         historicalWeighting: resolvedHistoricalWeighting,
@@ -329,59 +333,58 @@ export async function processAccuracyRequest(params) {
         // This prevents historical snapshots from overwriting real, recent analyzer outputs for non-perfect messages.
         const persistUsingWeighted = typeof currentAccuracy.overall === 'number' && currentAccuracy.overall >= 99;
         const snapshotToPersist = persistUsingWeighted ? weightedAccuracy : currentAccuracy;
-        const cacheResult = await fastAccuracyCache.updateAccuracy(userId, {
-            overall: clampScore(snapshotToPersist.overall ?? currentAccuracy.overall),
-            grammar: clampScore(snapshotToPersist.grammar ?? currentAccuracy.grammar),
-            vocabulary: clampScore(snapshotToPersist.vocabulary ?? currentAccuracy.vocabulary),
-            spelling: clampScore(snapshotToPersist.spelling ?? currentAccuracy.spelling),
-            fluency: clampScore(snapshotToPersist.fluency ?? currentAccuracy.fluency),
-            punctuation: clampScore(snapshotToPersist.punctuation ?? currentAccuracy.punctuation),
-            capitalization: clampScore(snapshotToPersist.capitalization ?? currentAccuracy.capitalization),
-            syntax: clampScore(snapshotToPersist.syntax ?? currentAccuracy.syntax),
-            coherence: clampScore(snapshotToPersist.coherence ?? currentAccuracy.coherence),
-        });
-        cacheSummary = {
-            overall: cacheResult.overall,
-            grammar: cacheResult.grammar,
-            vocabulary: cacheResult.vocabulary,
-            spelling: cacheResult.spelling,
-            fluency: cacheResult.fluency,
-            messageCount: cacheResult.messageCount,
-            lastUpdated: (cacheResult.lastUpdated ?? new Date()).toISOString(),
-        };
-        console.log('🧠 [AccuracyProcessing] Cache updated (persisted snapshot)', {
-            persisted: persistUsingWeighted ? 'weighted' : 'current',
-            overall: cacheSummary.overall,
-            grammar: cacheSummary.grammar,
-            vocabulary: cacheSummary.vocabulary,
-            spelling: cacheSummary.spelling,
-            fluency: cacheSummary.fluency,
-            messageCount: cacheSummary.messageCount,
-            lastUpdated: cacheSummary.lastUpdated,
-        });
-        await optimizedAccuracyTracker.trackAccuracy({
-            userId,
-            overall: cacheResult.overall,
-            grammar: cacheResult.grammar,
-            vocabulary: cacheResult.vocabulary,
-            spelling: cacheResult.spelling,
-            fluency: cacheResult.fluency,
-            latest: {
-                overall: snapshotToPersist.overall ?? currentAccuracy.overall,
-                adjustedOverall: snapshotToPersist.adjustedOverall ?? snapshotToPersist.overall,
-                grammar: snapshotToPersist.grammar ?? currentAccuracy.grammar,
-                vocabulary: snapshotToPersist.vocabulary ?? currentAccuracy.vocabulary,
-                spelling: snapshotToPersist.spelling ?? currentAccuracy.spelling,
-                fluency: snapshotToPersist.fluency ?? currentAccuracy.fluency,
-                punctuation: snapshotToPersist.punctuation ?? currentAccuracy.punctuation,
-                capitalization: snapshotToPersist.capitalization ?? currentAccuracy.capitalization,
-                syntax: snapshotToPersist.syntax ?? currentAccuracy.syntax,
-                coherence: snapshotToPersist.coherence ?? currentAccuracy.coherence,
-                timestamp: new Date(),
-            },
-        });
-        // Persist progress using the chosen snapshot (current vs weighted) to keep XP/Progress consistent with published cache.
-        await progressOptimizationService.updateAccuracyData(userId, buildProgressPayload(snapshotToPersist, analysis), { priority: 'high' });
+        if (params.persistToDatabase !== false) {
+            const cacheResult = await fastAccuracyCache.updateAccuracy(userId, {
+                overall: clampScore(snapshotToPersist.overall ?? currentAccuracy.overall),
+                grammar: clampScore(snapshotToPersist.grammar ?? currentAccuracy.grammar),
+                vocabulary: clampScore(snapshotToPersist.vocabulary ?? currentAccuracy.vocabulary),
+                spelling: clampScore(snapshotToPersist.spelling ?? currentAccuracy.spelling),
+                fluency: clampScore(snapshotToPersist.fluency ?? currentAccuracy.fluency),
+                punctuation: clampScore(snapshotToPersist.punctuation ?? currentAccuracy.punctuation),
+                capitalization: clampScore(snapshotToPersist.capitalization ?? currentAccuracy.capitalization),
+                syntax: clampScore(snapshotToPersist.syntax ?? currentAccuracy.syntax),
+                coherence: clampScore(snapshotToPersist.coherence ?? currentAccuracy.coherence),
+            });
+            cacheSummary = {
+                overall: cacheResult.overall,
+                grammar: cacheResult.grammar,
+                vocabulary: cacheResult.vocabulary,
+                spelling: cacheResult.spelling,
+                fluency: cacheResult.fluency,
+                messageCount: cacheResult.messageCount ?? 0,
+                lastUpdated: cacheResult.lastUpdated instanceof Date ? cacheResult.lastUpdated.toISOString() : String(cacheResult.lastUpdated ?? new Date().toISOString()),
+            };
+            console.log('🧠 [AccuracyProcessing] Cache updated (persisted snapshot)', {
+                persisted: persistUsingWeighted ? 'weighted' : 'current',
+                ...cacheSummary,
+            });
+            await optimizedAccuracyTracker.trackAccuracy({
+                userId,
+                overall: cacheResult.overall,
+                grammar: cacheResult.grammar,
+                vocabulary: cacheResult.vocabulary,
+                spelling: cacheResult.spelling,
+                fluency: cacheResult.fluency,
+                latest: {
+                    overall: snapshotToPersist.overall ?? currentAccuracy.overall,
+                    adjustedOverall: snapshotToPersist.adjustedOverall ?? snapshotToPersist.overall,
+                    grammar: snapshotToPersist.grammar ?? currentAccuracy.grammar,
+                    vocabulary: snapshotToPersist.vocabulary ?? currentAccuracy.vocabulary,
+                    spelling: snapshotToPersist.spelling ?? currentAccuracy.spelling,
+                    fluency: snapshotToPersist.fluency ?? currentAccuracy.fluency,
+                    punctuation: snapshotToPersist.punctuation ?? currentAccuracy.punctuation,
+                    capitalization: snapshotToPersist.capitalization ?? currentAccuracy.capitalization,
+                    syntax: snapshotToPersist.syntax ?? currentAccuracy.syntax,
+                    coherence: snapshotToPersist.coherence ?? currentAccuracy.coherence,
+                    timestamp: new Date(),
+                },
+            });
+            // Persist progress using the chosen snapshot (current vs weighted) to keep XP/Progress consistent with published cache.
+            await progressOptimizationService.updateAccuracyData(userId, buildProgressPayload(snapshotToPersist, analysis), { priority: 'high' });
+        }
+        else {
+            console.log('🚫 [AccuracyProcessing] persistToDatabase is false, bypassing cache and DB writes');
+        }
     }
     const historicalControls = resolvedHistoricalWeighting
         ? {

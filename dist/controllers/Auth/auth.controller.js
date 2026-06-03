@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { User, RefreshToken, UserProfile } from '../../models/index.js';
 import { generateTokens } from '../../middleware/auth/auth.js';
 import { redisCache, CACHE_TTL } from '../../config/redis.js';
@@ -12,6 +13,15 @@ export class AuthController {
     async register(req, res) {
         try {
             let { email, password, firstName, lastName, fullName, username, role = 'student' } = req.body;
+            if (!email || typeof email !== 'string') {
+                return res.status(400).json({ success: false, message: 'Invalid or missing email', field: 'email' });
+            }
+            if (!password || typeof password !== 'string') {
+                return res.status(400).json({ success: false, message: 'Invalid or missing password', field: 'password' });
+            }
+            if (username && typeof username !== 'string') {
+                return res.status(400).json({ success: false, message: 'Invalid username format', field: 'username' });
+            }
             // If fullName is provided, split it into first and last names
             if (fullName && !firstName) {
                 const nameParts = fullName.trim().split(' ');
@@ -107,6 +117,8 @@ export class AuthController {
                         username: user.username,
                         fullName: user.fullName,
                         role: user.role,
+                        isVerified: user.isVerified,
+                        verificationStatus: user.verificationStatus,
                         tier: subDetails.tier,
                         subscriptionStatus: user.subscription.status,
                         subscriptionPlan: user.subscription.planCode,
@@ -135,6 +147,12 @@ export class AuthController {
     async login(req, res) {
         try {
             const { email, password } = req.body;
+            if (!email || typeof email !== 'string' || !password || typeof password !== 'string') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid email or password format',
+                });
+            }
             // Find user by email
             const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
             if (!user) {
@@ -142,6 +160,19 @@ export class AuthController {
                     success: false,
                     message: 'Invalid email or password',
                 });
+            }
+            // Check account status
+            if (user.accountStatus && user.accountStatus !== 'active') {
+                return res.status(401).json({
+                    success: false,
+                    message: `Account is ${user.accountStatus}`,
+                    code: `ACCOUNT_${user.accountStatus.toUpperCase()}`,
+                    reason: user.statusReason
+                });
+            }
+            // Debug: ensure password was selected
+            if (!user.password || typeof user.password !== 'string') {
+                console.warn('Login: password field not present on fetched user (was +password applied?). userId=', user._id ? user._id.toString() : '(unknown)');
             }
             // Verify password
             const isPasswordValid = await user.comparePassword(password);
@@ -181,6 +212,8 @@ export class AuthController {
                         username: user.username,
                         fullName: user.fullName,
                         role: user.role,
+                        isVerified: user.isVerified,
+                        verificationStatus: user.verificationStatus,
                         tier: subDetails.tier,
                         subscriptionStatus: user.subscription.status,
                         subscriptionPlan: user.subscription.planCode,
@@ -498,16 +531,56 @@ export class AuthController {
     async requestPasswordReset(req, res) {
         try {
             const { email } = req.body;
+            if (!email || typeof email !== 'string') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid or missing email format',
+                });
+            }
             const user = await User.findOne({ email: email.toLowerCase() });
             if (!user) {
-                // Don't reveal if email exists or not for security
+                // Anti-enumeration: Don't reveal if email exists or not
                 return res.json({
                     success: true,
                     message: 'If the email exists, a password reset link has been sent.',
                 });
             }
-            // TODO: Implement email sending with reset token
-            // For now, just return success message
+            // Generate secure 32-byte crypto token
+            const resetToken = crypto.randomBytes(32).toString('hex');
+            // Security measure: Hash the token using SHA-256 before saving to DB
+            // This protects users even if the database is leaked
+            const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+            // Set token and expiration (1 hour)
+            user.resetPasswordToken = hashedToken;
+            user.resetPasswordExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+            await user.save();
+            // Send password reset email with unhashed token
+            const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+            const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
+            try {
+                await queueEmail({
+                    to: user.email,
+                    subject: 'Password Reset Request',
+                    template: 'password-reset', // Assuming there's a password-reset template, otherwise fallback to plain text body if generic template exists
+                    data: {
+                        userName: user.fullName || user.firstName,
+                        resetUrl: resetUrl,
+                        appUrl: frontendUrl,
+                    },
+                    priority: 'high'
+                });
+            }
+            catch (emailError) {
+                console.error('Failed to queue password reset email:', emailError);
+                // Clear tokens if email fails to send
+                user.resetPasswordToken = undefined;
+                user.resetPasswordExpires = undefined;
+                await user.save();
+                return res.status(500).json({
+                    success: false,
+                    message: 'Error sending password reset email. Please try again later.',
+                });
+            }
             return res.json({
                 success: true,
                 message: 'If the email exists, a password reset link has been sent.',
@@ -527,11 +600,37 @@ export class AuthController {
     async resetPassword(req, res) {
         try {
             const { token, newPassword } = req.body;
-            // TODO: Implement password reset token verification
-            // For now, return a placeholder response
+            if (!token || !newPassword || newPassword.length < 8) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Valid token and a new password (min 8 chars) are required.',
+                });
+            }
+            // Hash the received token to compare with the one in DB
+            const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+            // Find user with matching token and unexpired expiration
+            // Note: We need to use findOne with explicit +resetPasswordToken since it's select: false
+            const user = await User.findOne({
+                resetPasswordToken: hashedToken,
+                resetPasswordExpires: { $gt: new Date() },
+            }).select('+resetPasswordToken +resetPasswordExpires');
+            if (!user) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Password reset token is invalid or has expired.',
+                });
+            }
+            // Update password
+            user.password = newPassword;
+            user.resetPasswordToken = undefined;
+            user.resetPasswordExpires = undefined;
+            // Save user (pre-save hook will hash the new password via bcrypt)
+            await user.save();
+            // Security measure: Revoke all refresh tokens instantly to terminate compromised sessions
+            await RefreshToken.revokeAllUserTokens(user._id);
             return res.json({
                 success: true,
-                message: 'Password reset functionality will be implemented soon.',
+                message: 'Password has been successfully reset. You can now log in with your new password.',
             });
         }
         catch (error) {

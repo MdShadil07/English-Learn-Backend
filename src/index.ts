@@ -8,6 +8,10 @@ import cluster from 'cluster';
 import os from 'os';
 import path from 'path';
 import { createServer } from 'http';
+import dns from 'dns';
+
+// Fix Node 17+ IPv6 DNS resolution timeouts for external API calls (e.g., Google SSO, SMTP)
+dns.setDefaultResultOrder('ipv4first');
 
 // Import database connection
 import { database } from './config/database.js';
@@ -20,6 +24,9 @@ import { clusterManager } from './utils/handlers/cluster.js';
 
 // Import enhanced error handling and monitoring
 import { enhancedHealthCheck, errorHandler } from './utils/handlers/errorHandler.js';
+
+// Swagger documentation
+import { setupSwagger } from './config/swagger.js';
 
 // Import middleware
 import { apiRateLimit } from './middleware/security/rateLimit.js';
@@ -39,10 +46,21 @@ import analyticsRoutes from './routes/Analytics/analytics.routes.js';
 import paymentRoutes from './routes/Subscription/payment.routes.js';
 import subscriptionRoutes from './routes/Subscription/subscription.routes.js';
 import { roomRoutes } from './routes/Room/index.js';
+import pronunciationRoutes from './routes/Pronunciation/index.js';
+import { supportRoutes } from './routes/Support/index.js';
+import { internalTelemetryRoutes } from './routes/Admin/telemetry.routes.js';
+import courseRoutes from './routes/course.routes.js';
+import notificationsRoutes from './routes/notifications.routes.js';
 
 // Import monitoring controller
 import { monitoringController, metricsMiddleware } from './controllers/Monitoring/monitoring.controller.js';
 import subscriptionService from './services/Subscription/subscriptionService.js';
+import {
+  createAIChatConversationPersistenceWorker,
+  shutdownAIChatConversationPersistenceWorker,
+} from './workers/aiChatConversationPersistenceWorker.js';
+import { shutdownAIChatConversationQueue } from './queues/aiChatConversationQueue.js';
+import { createSpeechAnalysisWorker, shutdownSpeechAnalysisWorker } from './workers/speechAnalysisWorker.js';
 
 // Import WebSocket service
 import { webSocketService } from './services/WebSocket/socketService.js';
@@ -67,8 +85,8 @@ async function initializeServices() {
     // Initialize email queue worker if Redis is available
     if (redisCache.isConnected()) {
       try {
-        const worker = await createEmailWorker();
-        if (worker) {
+        const emailWorker = await createEmailWorker();
+        if (emailWorker) {
           console.log('✅ Email queue worker initialized');
         } else {
           console.log('⚠️ Email queue worker not initialized (Redis unavailable)');
@@ -77,8 +95,23 @@ async function initializeServices() {
         console.warn('⚠️ Email queue worker failed to initialize:', error);
         // Continue without email queue - emails will be sent synchronously
       }
+
+      if (process.env.NODE_ENV !== 'production' && process.env.SPEECH_WORKER_MODE !== 'external') {
+        createSpeechAnalysisWorker().catch(err => {
+          console.error('⚠️ Failed to start local speech analysis worker:', err);
+        });
+        console.log('ℹ️ Local speech analysis worker started for development mode');
+      } else {
+        console.log('ℹ️ Speech analysis worker is managed by the standalone worker process');
+      }
+      
+      if (process.env.AI_CHAT_PERSISTENCE_WORKER_MODE === 'external') {
+        console.log('ℹ️ AI chat persistence worker is configured as an external process');
+      } else {
+        createAIChatConversationPersistenceWorker();
+      }
     } else {
-      console.log('⚠️ Redis not available, emails will be sent synchronously');
+      console.log('⚠️ Redis not available, emails, speech analysis queues, and AI chat persistence queue will not start');
     }
 
     console.log('✅ All services initialized successfully');
@@ -125,6 +158,8 @@ async function startServer(): Promise<void> {
     // Body parsing middleware
     app.use(express.json({ limit: '10mb' }));
     app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+    setupSwagger(app);
 
     // Static file serving for uploads
     app.use('/api/files', express.static(path.join(process.cwd(), 'uploads'), {
@@ -183,6 +218,13 @@ async function startServer(): Promise<void> {
     app.use('/api/payment', paymentRoutes);
     app.use('/api/subscription', subscriptionRoutes);
     app.use('/api/rooms', roomRoutes);
+    app.use('/api/pronunciation', pronunciationRoutes);
+    app.use('/api/support', supportRoutes);
+    app.use('/api/courses', courseRoutes);
+    app.use('/api/notifications', notificationsRoutes);
+    
+    // Internal admin routes
+    app.use('/api/admin/internal/telemetry', internalTelemetryRoutes);
 
     // 404 handler
     app.use('*', (req, res) => {
@@ -204,6 +246,9 @@ async function startServer(): Promise<void> {
 
         try {
           await Promise.all([
+            shutdownAIChatConversationPersistenceWorker(),
+            shutdownAIChatConversationQueue(),
+            shutdownSpeechAnalysisWorker(),
             webSocketService.shutdown(),
             database.disconnect(),
             redisCache.disconnect(),

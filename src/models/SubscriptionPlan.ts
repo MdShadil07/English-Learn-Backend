@@ -86,7 +86,6 @@ const subscriptionPlanSchema = new Schema<ISubscriptionPlan, ISubscriptionPlanMo
 );
 
 // Indexes
-subscriptionPlanSchema.index({ code: 1 }, { unique: true });
 subscriptionPlanSchema.index({ isActive: 1 });
 subscriptionPlanSchema.index({ tier: 1 });
 

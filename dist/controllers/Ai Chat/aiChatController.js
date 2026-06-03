@@ -12,6 +12,8 @@ import * as xpCalculator from '../../services/Gamification/xpCalculator.js';
 import { optimizedAccuracyTracker } from '../../services/Accuracy/index.js';
 import { trackAIChatMessage } from '../../middleware/streakTracking.js';
 import { cache } from '../../middleware/cache.js';
+import { conversationPersistenceService } from '../../services/Ai Chat/conversationPersistenceService.js';
+import { getAIChatConversationQueueStats } from '../../queues/aiChatConversationQueue.js';
 const router = Router();
 // Rate limiting for AI requests
 const aiRateLimit = rateLimit({
@@ -26,6 +28,111 @@ const aiRateLimit = rateLimit({
     legacyHeaders: false,
 });
 const geminiService = new GeminiAIService(process.env.GEMINI_API_KEY);
+const getAuthUserId = (req) => {
+    return (req.user._id || req.user.id).toString();
+};
+// Load saved AI conversations for the signed-in user.
+router.get('/conversations', authenticate, async (req, res) => {
+    try {
+        const userId = getAuthUserId(req);
+        const limit = Number(req.query.limit || 50);
+        const conversations = await conversationPersistenceService.listConversations(userId, limit);
+        res.json({
+            success: true,
+            conversations,
+        });
+    }
+    catch (error) {
+        console.error('Failed to load AI chat conversations:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to load AI chat conversations',
+        });
+    }
+});
+// Load messages for one saved conversation.
+router.get('/conversations/:conversationId/messages', authenticate, async (req, res) => {
+    try {
+        const userId = getAuthUserId(req);
+        const { conversationId } = req.params;
+        const limit = Number(req.query.limit || 1000);
+        const messages = await conversationPersistenceService.getMessages(userId, conversationId, limit);
+        res.json({
+            success: true,
+            conversationId,
+            messages,
+        });
+    }
+    catch (error) {
+        console.error('Failed to load AI chat messages:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to load AI chat messages',
+        });
+    }
+});
+// Queue a completed user+assistant turn. The service batches DB writes behind the scenes.
+router.post('/conversations/turn', authenticate, [
+    body('conversationId').isString().isLength({ min: 1, max: 120 }).withMessage('Valid conversationId is required'),
+    body('personalityId').isString().isLength({ min: 1, max: 80 }).withMessage('Valid personalityId is required'),
+    body('title').optional().isString().isLength({ max: 160 }).withMessage('Title is too long'),
+    body('messages').isArray({ min: 1, max: 10 }).withMessage('Messages must be a small array'),
+    body('messages.*.messageId').isString().isLength({ min: 1, max: 120 }).withMessage('Message id is required'),
+    body('messages.*.role').isIn(['user', 'assistant']).withMessage('Invalid message role'),
+    body('messages.*.content').isString().isLength({ min: 1, max: 12000 }).withMessage('Message content is required'),
+], async (req, res) => {
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            res.status(400).json({ success: false, errors: errors.array() });
+            return;
+        }
+        const userId = getAuthUserId(req);
+        const { conversationId, personalityId, title = 'AI Chat', messages } = req.body;
+        const queueResult = await conversationPersistenceService.queueTurn({
+            userId,
+            conversationId,
+            personalityId,
+            title,
+            messages: messages.map((message) => ({
+                messageId: message.messageId,
+                role: message.role,
+                content: message.content,
+                timestamp: new Date(message.timestamp || Date.now()),
+                personalityId: message.personalityId || personalityId,
+            })),
+        });
+        res.status(202).json({
+            success: true,
+            ...queueResult,
+        });
+    }
+    catch (error) {
+        console.error('Failed to queue AI chat turn:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to queue AI chat turn',
+        });
+    }
+});
+// Report queue status. Durable queue processing is handled by workers, not API memory.
+router.post('/conversations/flush', authenticate, async (req, res) => {
+    try {
+        const stats = await getAIChatConversationQueueStats();
+        res.json({
+            success: true,
+            queued: stats.waiting + stats.active + stats.delayed,
+            stats,
+        });
+    }
+    catch (error) {
+        console.error('Failed to flush AI chat conversations:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to flush AI chat conversations',
+        });
+    }
+});
 // Generate AI response with streaming support
 router.post('/generate', authenticate, trackAIChatMessage, // ✨ Automatically track AI chat for streaks
 aiRateLimit, [
@@ -40,7 +147,7 @@ aiRateLimit, [
             return;
         }
         const { message, personalityId, language = 'en', conversationHistory = [], userProfile } = req.body;
-        const userId = (req.user._id || req.user.id).toString();
+        const userId = getAuthUserId(req);
         // Fetch AI chat settings to get user's preferred response language
         let responseLanguage = 'english'; // Default
         let userNativeLanguage;
@@ -93,31 +200,13 @@ aiRateLimit, [
                 skillLevels: userProfile.skillLevels
             } : undefined
         };
-        // Set up Server-Sent Events
-        const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:8080').split(',');
-        const origin = req.headers.origin;
-        const corsHeaders = {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-            'Access-Control-Allow-Credentials': 'true',
-            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        };
-        // Check if origin is allowed
-        if (origin && allowedOrigins.includes(origin)) {
-            corsHeaders['Access-Control-Allow-Origin'] = origin;
-        }
-        else if (allowedOrigins.length > 0) {
-            corsHeaders['Access-Control-Allow-Origin'] = allowedOrigins[0];
-        }
-        res.writeHead(200, corsHeaders);
-        let fullResponse = '';
-        // Stream the response from Gemini
-        const streamResponse = await geminiService.generateResponse(request);
-        // For now, send the complete response (we'll implement chunked streaming later)
-        fullResponse = streamResponse.response;
+        // Call Gemini WITHOUT streaming — get the complete response reliably
+        const streamResponse = await geminiService.generateResponse({
+            ...request,
+            // No onChunk — forces non-streaming Gemini call for guaranteed full response
+        });
+        const fullResponse = streamResponse.response;
         // ⚡ QUEUE ACCURACY ANALYSIS + XP CALCULATION (NON-BLOCKING)
-        // This runs in the background, so AI response returns immediately
         try {
             console.log('🔄 ========== QUEUEING BACKGROUND ACCURACY JOB ==========');
             console.log(`👤 User ID: ${userId.substring(0, 8)}`);
@@ -125,14 +214,13 @@ aiRateLimit, [
             console.log(`🤖 Response length: ${fullResponse.length} chars`);
             console.log(`🎯 Tier: ${userTier}`);
             const { comprehensiveJobScheduler } = await import('../../jobs/comprehensiveJobScheduler.js');
-            // Queue the job (returns immediately, processes in background)
             const jobId = await comprehensiveJobScheduler.queueAccuracyAnalysis({
                 userId,
                 userMessage: request.userMessage,
                 aiResponse: fullResponse,
                 userTier: userTier,
-                userLevel: undefined, // Will be auto-detected from DB
-                previousAccuracy: undefined, // Will be fetched from DB
+                userLevel: undefined,
+                previousAccuracy: undefined,
                 timestamp: Date.now(),
             });
             console.log(`✅ Queued background job ${jobId} for user ${userId.substring(0, 8)}`);
@@ -143,18 +231,16 @@ aiRateLimit, [
             console.error('❌ ========== ERROR QUEUEING BACKGROUND JOB ==========');
             console.error('Error:', error);
             console.error('====================================================');
-            // Don't fail the request if queue fails
         }
-        // Send the response as SSE IMMEDIATELY (don't wait for accuracy/XP)
-        res.write(`data: ${JSON.stringify({ chunk: fullResponse })}\n\n`);
-        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-        res.end();
+        // Send the complete response as JSON — no SSE, no chunks, no data loss
+        res.json({
+            success: true,
+            response: fullResponse,
+        });
     }
     catch (error) {
         console.error('AI generation error:', error);
-        // Send error as SSE
-        res.write(`data: ${JSON.stringify({ error: 'Failed to generate AI response' })}\n\n`);
-        res.end();
+        res.status(500).json({ error: 'Failed to generate AI response' });
     }
 });
 // Analyze message accuracy

@@ -2,6 +2,7 @@ import axios from 'axios';
 import { analyzeMessage as runUnifiedAccuracy, } from '../../utils/calculators/unifiedAccuracyCalculators.js';
 import { buildFallbackUnifiedResult, enforcePenalty, } from '../Accuracy/penaltyEnforcer.js';
 import { detectLanguage } from '../NLP/languageDetectionService.js';
+import { telemetryService } from '../telemetryService.js';
 const clampScore = (value, fallback = 0) => {
     if (typeof value !== 'number' || Number.isNaN(value)) {
         return fallback;
@@ -156,8 +157,9 @@ export class GeminiAIService {
             },
         });
     }
-    getGeminiEndpoint() {
-        return `${this.baseUrl}/models/${this.model}:generateContent?key=${this.apiKey}`;
+    getGeminiEndpoint(stream = false) {
+        const action = stream ? 'streamGenerateContent?alt=sse&key=' : 'generateContent?key=';
+        return `${this.baseUrl}/models/${this.model}:${action}${this.apiKey}`;
     }
     getFallbackResponse(personalityId) {
         return (this.fallbackResponses[personalityId] ||
@@ -223,23 +225,90 @@ export class GeminiAIService {
     async delay(ms) {
         await new Promise((resolve) => setTimeout(resolve, ms));
     }
-    async sendGeminiRequestWithRetries(requestBody, tier) {
+    async sendGeminiRequestWithRetries(requestBody, tier, onChunk) {
         const attempts = this.maxRetries;
-        const url = this.getGeminiEndpoint();
+        const stream = !!onChunk;
+        const url = this.getGeminiEndpoint(stream);
         for (let attempt = 1; attempt <= attempts; attempt++) {
             try {
-                const response = await axios.post(url, requestBody, {
-                    headers: { 'Content-Type': 'application/json' },
-                    timeout: this.requestTimeout,
-                });
-                const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-                if (!text) {
-                    throw new Error('Gemini returned an empty response.');
+                if (stream) {
+                    const response = await axios.post(url, requestBody, {
+                        headers: { 'Content-Type': 'application/json' },
+                        responseType: 'stream',
+                        timeout: this.requestTimeout,
+                    });
+                    return await new Promise((resolve, reject) => {
+                        let fullText = '';
+                        let buffer = '';
+                        response.data.on('data', (chunk) => {
+                            buffer += chunk.toString();
+                            let lines = buffer.split('\n');
+                            buffer = lines.pop() || '';
+                            for (const line of lines) {
+                                if (line.startsWith('data: ')) {
+                                    try {
+                                        const dataStr = line.substring(6).trim();
+                                        if (dataStr === '[DONE]' || !dataStr)
+                                            continue;
+                                        const data = JSON.parse(dataStr);
+                                        const textChunk = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                                        if (textChunk) {
+                                            fullText += textChunk;
+                                            onChunk(textChunk);
+                                        }
+                                    }
+                                    catch (e) {
+                                        // Ignore parse error
+                                    }
+                                }
+                            }
+                        });
+                        response.data.on('end', () => {
+                            // Process any remaining data left in the buffer
+                            if (buffer.trim()) {
+                                const remainingLine = buffer.trim();
+                                if (remainingLine.startsWith('data: ')) {
+                                    try {
+                                        const dataStr = remainingLine.substring(6).trim();
+                                        if (dataStr && dataStr !== '[DONE]') {
+                                            const data = JSON.parse(dataStr);
+                                            const textChunk = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                                            if (textChunk) {
+                                                fullText += textChunk;
+                                                onChunk(textChunk);
+                                            }
+                                        }
+                                    }
+                                    catch (e) {
+                                        // Ignore parse error on trailing buffer
+                                    }
+                                }
+                            }
+                            if (attempt > 1) {
+                                console.log('✅ Gemini request recovered after retry', { attempt });
+                            }
+                            if (!fullText)
+                                reject(new Error('Gemini returned an empty response.'));
+                            else
+                                resolve(fullText);
+                        });
+                        response.data.on('error', (err) => reject(err));
+                    });
                 }
-                if (attempt > 1) {
-                    console.log('✅ Gemini request recovered after retry', { attempt });
+                else {
+                    const response = await axios.post(url, requestBody, {
+                        headers: { 'Content-Type': 'application/json' },
+                        timeout: this.requestTimeout,
+                    });
+                    const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+                    if (!text) {
+                        throw new Error('Gemini returned an empty response.');
+                    }
+                    if (attempt > 1) {
+                        console.log('✅ Gemini request recovered after retry', { attempt });
+                    }
+                    return text;
                 }
-                return text;
             }
             catch (error) {
                 const willRetry = attempt < attempts && this.shouldRetryGeminiError(error);
@@ -259,9 +328,9 @@ export class GeminiAIService {
     async generateResponse(request) {
         // Process directly without queues to avoid BullMQ configuration issues
         // Queue system can be enabled later when Redis is properly configured
-        return this.generateResponseInternal(request.userMessage, request.personality, request.conversationHistory, request.language, request.userNativeLanguage, request.userTier, request.responseLanguage, request.userId);
+        return this.generateResponseInternal(request.userMessage, request.personality, request.conversationHistory, request.language, request.userNativeLanguage, request.userTier, request.responseLanguage, request.userId, request.onChunk);
     }
-    async generateResponseInternal(userMessage, personality, conversationHistory, language, userNativeLanguage, userTier, responseLanguage, userId) {
+    async generateResponseInternal(userMessage, personality, conversationHistory, language, userNativeLanguage, userTier, responseLanguage, userId, onChunk) {
         const recentHistory = conversationHistory.slice(-20);
         const tierValue = normalizeTier(userTier);
         // If Gemini API is not available, return fallback immediately
@@ -277,6 +346,7 @@ export class GeminiAIService {
             };
         }
         const prompt = this.buildPrompt(personality, language, recentHistory, userMessage, userNativeLanguage, userTier, responseLanguage);
+        const startTime = Date.now();
         try {
             const requestBody = {
                 contents: [
@@ -292,7 +362,8 @@ export class GeminiAIService {
             const accuracyPromise = shouldAnalyzeAccuracy
                 ? this.analyzeMessageInternal(userMessage, userId, tierValue)
                 : null;
-            const text = await this.sendGeminiRequestWithRetries(requestBody, tierValue);
+            const text = await this.sendGeminiRequestWithRetries(requestBody, tierValue, onChunk);
+            telemetryService.recordServiceCall('aichat', Date.now() - startTime, false);
             let accuracy;
             let xpGained;
             if (accuracyPromise) {
@@ -306,6 +377,7 @@ export class GeminiAIService {
             };
         }
         catch (error) {
+            telemetryService.recordServiceCall('aichat', Date.now() - startTime, true);
             console.error('Gemini API error after retries:', this.extractErrorDebugInfo(error));
             const fallbackResponse = this.getFallbackResponse(personality.id);
             const fallbackAccuracy = await this.analyzeMessageInternal(userMessage, userId, tierValue);

@@ -19,7 +19,7 @@ import { ProficiencyLevel } from './type/index.js';
 
 export const XP_CURVE_CONFIG: XPCurveConfig = {
   BASE_XP: 220,
-  EXPONENT: 1.1,
+  EXPONENT: 1.15, // Increased from 1.1 to make higher levels harder
   MULTIPLIER: 1.08,
   MILESTONE_BONUS: 1.25,
   PRESTIGE_SCALING: 1.15,
@@ -36,13 +36,13 @@ export const LEVEL_DIFFICULTY_MODIFIERS = [
 ];
 
 export const XP_PENALTY_RULES = {
-  // Reduced penalty weights to avoid excessive negative XP for common errors
-  ERROR_WEIGHT: 0.02,
-  CRITICAL_ERROR_WEIGHT: 0.06,
-  LOW_ACCURACY_THRESHOLD: 70,
-  LOW_ACCURACY_WEIGHT: 0.01,
-  // Limit the multiplier for negative XP so simple mistakes cannot produce large negative values
-  MAX_NEGATIVE_MULTIPLIER: 1,
+  // Increased penalty weights so that poor performance properly drops XP
+  ERROR_WEIGHT: 0.05,
+  CRITICAL_ERROR_WEIGHT: 0.15,
+  LOW_ACCURACY_THRESHOLD: 75,
+  LOW_ACCURACY_WEIGHT: 0.02,
+  // Increased limit so users can lose up to 3x base amount on very bad performance
+  MAX_NEGATIVE_MULTIPLIER: 3,
 };
 
 // ========================================

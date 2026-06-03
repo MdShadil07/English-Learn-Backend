@@ -64,6 +64,17 @@ export const authenticate = async (req, res, next) => {
             });
             return;
         }
+        // Check account status for suspension/ban/deletion
+        if (user.accountStatus && user.accountStatus !== 'active') {
+            console.log(`❌ Auth middleware: User account is ${user.accountStatus}`);
+            res.status(401).json({
+                success: false,
+                message: `Account is ${user.accountStatus}`,
+                code: `ACCOUNT_${user.accountStatus.toUpperCase()}`,
+                reason: user.statusReason
+            });
+            return;
+        }
         // TODO: Check UserProfile.isActive when profile exists
         // For now, assume user is active if they exist in database
         console.log('✅ Auth middleware: Authentication successful for user:', user.email);
@@ -117,6 +128,16 @@ export const refreshAuthToken = async (req, res, next) => {
             res.status(401).json({
                 success: false,
                 message: 'User not found',
+            });
+            return;
+        }
+        // Check account status
+        if (user.accountStatus && user.accountStatus !== 'active') {
+            res.status(401).json({
+                success: false,
+                message: `Account is ${user.accountStatus}`,
+                code: `ACCOUNT_${user.accountStatus.toUpperCase()}`,
+                reason: user.statusReason
             });
             return;
         }

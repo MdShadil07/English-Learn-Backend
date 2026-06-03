@@ -4,7 +4,24 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const connection = new (IORedis as any)(process.env.REDIS_URL || 'redis://localhost:6379');
+const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+
+const redisOptions = {
+  lazyConnect: true,
+  maxRetriesPerRequest: null,
+  enableReadyCheck: true,
+  connectTimeout: 5000,
+  retryStrategy: (times: number) => Math.min(times * 50, 2000),
+  reconnectOnError: (_err: any) => true,
+};
+
+const connection = new (IORedis as any)(redisUrl, redisOptions);
+
+connection.on('error', (err: any) => {
+  console.error('[Redis:subscriptionQueue] error', err);
+});
+connection.on('connect', () => console.log('[Redis:subscriptionQueue] connect'));
+connection.on('close', () => console.log('[Redis:subscriptionQueue] connection closed'));
 
 export const subscriptionQueue = new Queue('subscription-tasks', { connection } );
 

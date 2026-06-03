@@ -1,16 +1,4 @@
 import { Request, Response } from 'express';
-/**
- * ENTERPRISE ACCURACY CONTROLLER WITH NLP INTEGRATION
- * Handles tier-based message analysis with premium features
- * Integrates LanguageTool & GPT fluency scoring
- * Redis caching for NLP responses
- * Saves to Progress schema with XP calculation
- * Backward compatible with legacy enhanced calculator
- */
-/**
- * Accuracy Controller
- * Handles message analysis and accuracy calculations
- */
 export declare class AccuracyController {
     /**
      * * 💎 Analyze message with tier-based premium features

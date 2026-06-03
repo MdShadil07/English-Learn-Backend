@@ -17,8 +17,9 @@
 
 // Removed: All XP/Level calculation imports - now handled by dedicated XP controller
 // XP calculation should be done separately by calling /api/xp/award endpoint
-import { IAccuracyData } from '../../models/Progress.js';
 import { redisCache } from '../../config/redis.js';
+import { telemetryService } from '../../services/telemetryService.js';
+import { IAccuracyData } from '../../models/Progress.js';
 import Redis from 'ioredis';
 
 // Import database models
@@ -113,66 +114,6 @@ function normalizeText(text: string): string {
   // Fix typographic quotes first
   normalized = normalized.replace(/[“”„‟]/g, '"');
   normalized = normalized.replace(/[‘’‚‛]/g, "'");
-
-  // Expand contractions
-  const contractions: Record<string, string> = {
-    "i'm": "i am",
-    "you're": "you are",
-    "he's": "he is",
-    "she's": "she is",
-    "it's": "it is",
-    "we're": "we are",
-    "they're": "they are",
-    "i've": "i have",
-    "you've": "you have",
-    "we've": "we have",
-    "they've": "they have",
-    "i'll": "i will",
-    "you'll": "you will",
-    "he'll": "he will",
-    "she'll": "she will",
-    "it'll": "it will",
-    "we'll": "we will",
-    "they'll": "they will",
-    "i'd": "i would",
-    "you'd": "you would",
-    "he'd": "he would",
-    "she'd": "she would",
-    "it'd": "it would",
-    "we'd": "we would",
-    "they'd": "they would",
-    "isn't": "is not",
-    "aren't": "are not",
-    "wasn't": "was not",
-    "weren't": "were not",
-    "haven't": "have not",
-    "hasn't": "has not",
-    "hadn't": "had not",
-    "won't": "will not",
-    "wouldn't": "would not",
-    "don't": "do not",
-    "doesn't": "does not",
-    "didn't": "did not",
-    "can't": "cannot",
-    "couldn't": "could not",
-    "shouldn't": "should not",
-    "mightn't": "might not",
-    "mustn't": "must not",
-    "let's": "let us",
-    "that's": "that is",
-    "who's": "who is",
-    "what's": "what is",
-    "where's": "where is",
-    "when's": "when is",
-    "why's": "why is",
-    "how's": "how is",
-  };
-
-  // Apply contractions expansion
-  for (const [contraction, expansion] of Object.entries(contractions)) {
-    const regex = new RegExp(`\\b${contraction}\\b`, 'gi');
-    normalized = normalized.replace(regex, expansion);
-  }
 
   // Normalize multiple spaces and trim
   normalized = normalized.replace(/\s+/g, ' ').trim();
@@ -421,8 +362,15 @@ export interface UnifiedAccuracyResult {
   tone?: {
     overall: 'formal' | 'neutral' | 'informal' | 'casual';
     confidence: number;
+    formalityScore: number;
+    assertivenessScore: number;
     recommendations?: string[];
     contextAppropriate: boolean;
+  };
+  style?: {
+    score: number;
+    passiveVoiceUsage: number;
+    sentenceLengthVariance: number;
   };
   readability?: {
     fleschKincaidGrade: number;
@@ -594,6 +542,7 @@ export interface AccuracyAnalysisOptions {
   redisClient?: any;
   historicalWeighting?: HistoricalWeightingConfig;
   languageContext?: LanguageDetectionSummary;
+  aiPersonality?: string;
 }
 
 // ============================================
@@ -1663,7 +1612,7 @@ export class UnifiedAccuracyCalculator {
       const [user, progress] = await Promise.all([
         // Fetch subscription metadata so we can compute the active tier
         User.findById(userId)
-          .select('tier email subscriptionStatus subscriptionEndDate')
+          .select('tier subscription')
           .lean()
           .exec(),
         Progress.findOne({ userId }).select('proficiencyLevel').lean().exec()
@@ -1675,28 +1624,28 @@ export class UnifiedAccuracyCalculator {
       }
 
       // Compute active tier taking subscription status and end date into account
-      let tier: UserTier = (user.tier as UserTier) || 'free';
+      let tier: UserTier = (user.tier as unknown as UserTier) || 'premium';
       try {
-        const subscriptionStatus = (user.subscriptionStatus as string) || 'expired';
-        const subscriptionEndDate = user.subscriptionEndDate ? new Date(user.subscriptionEndDate) : null;
+        const subscriptionStatus = (user.subscription?.status as string) || 'none';
+        const subscriptionEndDate = user.subscription?.expiresAt ? new Date(user.subscription.expiresAt) : null;
 
         if (subscriptionStatus === 'active' && subscriptionEndDate) {
           if (new Date() > subscriptionEndDate) {
             tier = 'free';
           } else {
             // keep the stored tier when subscription is active and not expired
-            tier = (user.tier as UserTier) || 'free';
+            tier = (user.tier as unknown as UserTier) || 'premium';
           }
         } else if (subscriptionStatus === 'active' && !subscriptionEndDate) {
           // Active with no end date (lifetime) — respect stored tier
-          tier = (user.tier as UserTier) || 'free';
+          tier = (user.tier as unknown as UserTier) || 'premium';
         } else {
           // expired or cancelled
-          tier = 'free';
+          tier = 'premium';
         }
       } catch (tierErr) {
         debugConsoleWarn('⚠️ Failed to compute active tier, falling back to stored tier:', tierErr);
-        tier = (user.tier as UserTier) || 'free';
+        tier = (user.tier as unknown as UserTier) || 'premium';
       }
       
       // Normalize proficiency level to match UserProficiencyLevel type
@@ -1737,7 +1686,7 @@ export class UnifiedAccuracyCalculator {
     const startTime = Date.now();
     
     let {
-      tier = 'free',
+      tier = 'premium',
       proficiencyLevel,
       userId,
       previousAccuracy,
@@ -1789,6 +1738,7 @@ export class UnifiedAccuracyCalculator {
         undefined, // historicalWeighting intentionally omitted here
         languageContext,
         enableNLP,
+        options.aiPersonality,
       );
       debugConsoleLog('📌 [UnifiedAccuracy] Basic analysis metrics', this.summarizeAccuracy(basicResult));
       debugConsoleLog('📌 [UnifiedAccuracy] Basic analysis stats', {
@@ -1908,8 +1858,8 @@ export class UnifiedAccuracyCalculator {
           const vocabularyUnknown = Math.max(0, Number(contrib?.vocabulary?.cefrDistribution?.unknown ?? 0));
           const fluencyScore = Math.max(0, Math.min(100, Number(contrib?.fluency?.score ?? basicResult.fluency ?? 100)));
           const fluencyPenalties = Math.max(0, 100 - fluencyScore);
-
           basicResult.statistics = {
+            ...basicResult.statistics,
             // Keep message-level totals for internal metrics, but separate counts for user-facing trust
             grammarErrors,
             vocabularyPenalties: vocabularyUnknown,
@@ -2024,12 +1974,12 @@ export class UnifiedAccuracyCalculator {
       const baselineSnapshot = this.captureAccuracySnapshot(basicResult);
       const alreadyWeighted = basicResult.performance?.strategy === 'enhanced-weighted';
 
-      // Step 3: Apply enhanced weighted calculation (if enabled and not already applied)
-      if (!alreadyWeighted && enableWeightedCalculation && userId) {
+      // Step 3: Apply enhanced weighted calculation (Disabled: Weighting centralized in fastAccuracyCache)
+      if (false && !alreadyWeighted && enableWeightedCalculation && userId) {
         try {
           debugConsoleLog('🧮 Applying enhanced weighted accuracy calculation (basic analysis)...');
           const enhancedResult = await enhancedWeightedAccuracyService.calculateEnhancedWeightedAccuracy(
-            userId,
+            userId!,
             {
               overall: basicResult.overall,
               grammar: basicResult.grammar,
@@ -2064,14 +2014,15 @@ export class UnifiedAccuracyCalculator {
             },
           };
 
-          if (historicalWeighting?.decayFactor !== undefined) {
-            basicResult.performance.decayFactorApplied = Number(historicalWeighting.decayFactor.toFixed(2));
+          if (historicalWeighting?.decayFactor !== undefined && basicResult.performance) {
+            basicResult.performance!.decayFactorApplied = Number(historicalWeighting!.decayFactor!.toFixed(2));
           }
-          if (historicalWeighting?.categoryBaselines) {
-            const baselineKeys = Object.keys(historicalWeighting.categoryBaselines)
+          if (historicalWeighting?.categoryBaselines && basicResult.performance) {
+            const baselines = historicalWeighting!.categoryBaselines as object;
+            const baselineKeys = Object.keys(baselines)
               .filter((key): key is NumericAccuracyKey => NUMERIC_ACCURACY_KEYS.includes(key as NumericAccuracyKey));
             if (baselineKeys.length > 0) {
-              basicResult.performance.baselinesApplied = baselineKeys;
+              basicResult.performance!.baselinesApplied = baselineKeys;
             }
           }
 
@@ -2083,17 +2034,18 @@ export class UnifiedAccuracyCalculator {
           debugConsoleLog('🪄 [UnifiedAccuracy] Weight diagnostics', basicResult.performance);
         } catch (error) {
           debugConsoleWarn('⚠️ FALLBACK TRIGGERED: Enhanced weighted calculation failed in basic analysis path');
-          debugConsoleWarn('  Reason:', error instanceof Error ? error.message : String(error));
+          debugConsoleWarn('  Reason:', error instanceof Error ? (error as Error).message : String(error));
           debugConsoleWarn('  User ID:', userId);
           debugConsoleWarn('  Fallback Strategy: Using unweighted basic accuracy results');
           debugConsoleWarn('  Impact: Historical context not applied, may show more variability');
         }
       }
 
-      if (!basicResult.weightedAccuracy && previousAccuracy) {
+      if (false && !basicResult.weightedAccuracy && previousAccuracy) {
         this.applyHistoricalSmoothingFallback(basicResult, tier, previousAccuracy, baselineSnapshot, historicalWeighting);
-      } else if (!basicResult.currentAccuracy) {
-        basicResult.currentAccuracy = this.cloneAccuracySnapshot(baselineSnapshot);
+      } else if (!basicResult.currentAccuracy || !basicResult.weightedAccuracy) {
+        basicResult.currentAccuracy = basicResult.currentAccuracy || this.cloneAccuracySnapshot(baselineSnapshot);
+        basicResult.weightedAccuracy = this.cloneAccuracySnapshot(basicResult.currentAccuracy);
       }
       
       // Step 4: Finalize results
@@ -2103,6 +2055,8 @@ export class UnifiedAccuracyCalculator {
         basicResult.languageContext = languageContext;
       }
       
+      telemetryService.recordServiceCall('unified-accuracy', basicResult.statistics.processingTime, false);
+
       debugConsoleLog(`✅ Unified analysis complete: ${basicResult.overall}% overall, ${basicResult.statistics.processingTime}ms`);
       debugConsoleLog(
         '🎯 [UnifiedAccuracy] Final snapshots',
@@ -2122,6 +2076,7 @@ export class UnifiedAccuracyCalculator {
       
       return basicResult;
     } catch (error) {
+      telemetryService.recordServiceCall('unified-accuracy', Date.now() - startTime, true);
       console.error('❌ Unified accuracy analysis failed:', error);
       throw error;
     }
@@ -2141,6 +2096,7 @@ export class UnifiedAccuracyCalculator {
     historicalWeighting?: HistoricalWeightingConfig,
     languageContext?: LanguageDetectionSummary,
     enableNLP?: boolean,
+    aiPersonality?: string,
   ): Promise<UnifiedAccuracyResult> {
     const features = TIER_FEATURES[tier];
     
@@ -2235,23 +2191,35 @@ export class UnifiedAccuracyCalculator {
     }
 
     // Vocabulary analysis
-    if (features.basicVocabulary) {
-      const vocabResult = this.analyzeVocabulary(normalizedMessage, tier, level);
-      result.vocabulary = vocabResult.score;
-      result.errors.push(...vocabResult.errors);
-      result.feedback.push(...vocabResult.feedback);
-      if (!result.categoryDetails) {
-        result.categoryDetails = {};
-      }
-      result.categoryDetails.vocabulary = {
-        ...vocabResult.metrics,
-      };
-
-      // Add advanced vocabulary analysis for pro/premium
-      if (vocabResult.vocabularyAnalysis) {
-        result.vocabularyAnalysis = vocabResult.vocabularyAnalysis;
-        // Store vocabularyLevel in result for consistency
-        (result as any).vocabularyLevel = vocabResult.vocabularyAnalysis.level;
+    // If NLP is enabled, vocabulary is calculated robustly in performNLPAnalysis and mapped later.
+    // If NLP is disabled, we calculate it here using the robust CEFR vocabAnalyzer to avoid redundancy.
+    if (features.basicVocabulary && !enableNLP) {
+      try {
+        const vocabAnalysis = await vocabAnalyzer.analyze(normalizedMessage);
+        result.vocabulary = vocabAnalysis.score;
+        
+        if (!result.categoryDetails) {
+          result.categoryDetails = {};
+        }
+        
+        result.categoryDetails.vocabulary = {
+          score: vocabAnalysis.score,
+          diversity: vocabAnalysis.lexicalDiversity * 100,
+          academicUsage: 0,
+          rareWordUsage: 0,
+          repetitionRate: 0,
+          repetitionPenalty: 0,
+          rangeScore: vocabAnalysis.score,
+        };
+        
+        if (vocabAnalysis.suggestions && vocabAnalysis.suggestions.length > 0) {
+          result.feedback.push(...vocabAnalysis.suggestions);
+        }
+        
+        (result as any).vocabularyLevel = vocabAnalysis.level;
+      } catch (err) {
+        // Fallback if vocabAnalyzer fails
+        result.vocabulary = 100;
       }
     }
 
@@ -2306,7 +2274,7 @@ export class UnifiedAccuracyCalculator {
     
     // Tone analysis (Pro+)
     if (features.toneAnalysis) {
-      result.tone = this.analyzeTone(message);
+      result.tone = this.analyzeTone(message, aiPersonality);
     }
     
     // Readability metrics (Pro+)
@@ -2372,12 +2340,12 @@ export class UnifiedAccuracyCalculator {
       result.currentAccuracy = this.cloneAccuracySnapshot(currentSnapshot);
     }
     
-    // Apply enhanced weighted accuracy if userId is provided
-    if (userId && enableWeightedCalculation) {
+    // Apply enhanced weighted accuracy if userId is provided (Disabled: Centralized in fastAccuracyCache)
+    if (false && userId && enableWeightedCalculation) {
       try {
   debugConsoleLog('🧮 Applying enhanced weighted accuracy calculation...');
         const enhancedResult = await enhancedWeightedAccuracyService.calculateEnhancedWeightedAccuracy(
-          userId,
+          userId!,
           {
             overall: result.overall,
             grammar: result.grammar,
@@ -2415,14 +2383,14 @@ export class UnifiedAccuracyCalculator {
           };
       } catch (error) {
   debugConsoleWarn('⚠️ FALLBACK TRIGGERED: Enhanced weighted accuracy calculation failed in NLP path');
-  debugConsoleWarn('  Reason:', error instanceof Error ? error.message : String(error));
+  debugConsoleWarn('  Reason:', error instanceof Error ? (error as Error).message : String(error));
   debugConsoleWarn('  User ID:', userId);
   debugConsoleWarn('  Fallback Strategy: Using current message accuracy without historical weighting');
   debugConsoleWarn('  Impact: Results may show more variability, historical smoothing not applied');
       }
     }
 
-    if (!result.weightedAccuracy && previousAccuracy) {
+    if (false && !result.weightedAccuracy && previousAccuracy) {
       this.applyHistoricalSmoothingFallback(result, tier, previousAccuracy, currentSnapshot, historicalWeighting);
     } else if (!result.weightedAccuracy) {
       result.weightedAccuracy = this.cloneAccuracySnapshot(currentSnapshot);
@@ -3197,7 +3165,7 @@ export class UnifiedAccuracyCalculator {
         let enhancedExamples = rule.examples;
 
         if (features.detailedExplanations && rule.explanation) {
-          const tierBadge = tier === 'premium' ? '🏆 Premium' : tier === 'pro' ? '⭐ Pro' : '';
+          const tierBadge = tier === 'premium' ? '🏆 Premium' : tier === 'pro' ? '⭐ Pro' : tier === 'free' ? '🆓 Free' : '';
           enhancedExplanation = tierBadge ? `${tierBadge} Insight: ${rule.explanation}` : rule.explanation;
           if (tier !== 'free') {
             enhancedExplanation += ' Focus on sentence agreement to keep ideas clear.';
@@ -3703,225 +3671,126 @@ export class UnifiedAccuracyCalculator {
     return { score, errors, feedback, metrics };
   }
   /**
-   * Analyze vocabulary using comprehensive assessment with ACADEMIC_WORDS
-   */
-  private analyzeVocabulary(message: string, tier: UserTier, level: UserProficiencyLevel): {
-    score: number;
-    errors: UnifiedErrorDetail[];
-    feedback: string[];
-    vocabularyAnalysis?: any;
-    metrics: VocabularyCategoryMetrics;
-  } {
-    const errors: UnifiedErrorDetail[] = [];
-    const feedback: string[] = [];
-    
-    // Extract words for analysis
-    const rawWords: string[] = message.match(/\b\w+\b/g) || [];
-    
-    // ============================================
-    // SPELLING CORRECTION BEFORE VOCABULARY ANALYSIS
-    // ============================================
-    const correctedWords = rawWords.map(word => {
-      const lowerWord = word.toLowerCase();
-      // Check if word is misspelled
-      if (!spellingChecker.check(lowerWord)) {
-        // Get spelling suggestions
-        const suggestions = spellingChecker.suggest(lowerWord);
-        if (suggestions.length > 0) {
-          // Use the best suggestion for vocabulary analysis
-          return suggestions[0];
-        }
-      }
-      return word;
-    });
-    
-    const words = correctedWords;
-    const avgWordLength = words.length > 0 
-      ? words.reduce((sum: number, word: string) => sum + word.length, 0) / words.length 
-      : 0;
-    
-    // Calculate vocabulary diversity
-    const uniqueWords = new Set(words.map(w => w.toLowerCase()));
-    const vocabularyDiversity = uniqueWords.size / Math.max(words.length, 1);
-    
-    // Calculate academic word usage
-    const academicWords = words.filter(w => ACADEMIC_WORDS.has(w.toLowerCase()));
-    const academicCount = academicWords.length;
-    const academicPercentage = (academicCount / Math.max(words.length, 1)) * 100;
-    
-    const rareWordRatio = words.filter((w) => w.length > 10).length / Math.max(words.length, 1);
-    const repetitionRate = Math.max(0, 1 - vocabularyDiversity);
-    const rangeScoreRaw = (vocabularyDiversity * 75) + Math.min(20, avgWordLength * 3) + Math.min(10, academicPercentage * 0.5);
-    const rangeScore = Math.min(100, Math.round(rangeScoreRaw));
-    const repetitionPenalty = Math.round(repetitionRate * 45);
-    let score = Math.max(0, Math.min(100, rangeScore - repetitionPenalty + Math.min(5, rareWordRatio * 40)));
-
-    const shortTextBoost = words.length > 0 && words.length < 25 ? 10 : 0;
-    if (shortTextBoost > 0) {
-      score = Math.min(100, score + shortTextBoost);
-    }
-    
-    // Advanced vocabulary analysis for pro/premium
-    let vocabularyAnalysis: any = undefined;
-    if (TIER_FEATURES[tier].vocabularyAnalysis) {
-      // CEFR level assessment based on academic word usage
-      let cefrLevel: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
-      if (academicPercentage > 30) cefrLevel = 'C2';
-      else if (academicPercentage > 20) cefrLevel = 'C1';
-      else if (academicPercentage > 10) cefrLevel = 'B2';
-      else if (academicPercentage > 5) cefrLevel = 'B1';
-      else if (words.length > 10) cefrLevel = 'A2';
-      else cefrLevel = 'A1';
-      
-      vocabularyAnalysis = {
-        level: cefrLevel,
-        academicWordUsage: Math.round(academicPercentage),
-        rareWordUsage: Math.round(rareWordRatio * 100),
-        wordDiversity: Math.round(vocabularyDiversity * 100),
-      };
-      vocabularyAnalysis.rangeScore = rangeScore;
-      vocabularyAnalysis.repetitionPenalty = repetitionPenalty;
-      vocabularyAnalysis.repetitionRate = Math.round(repetitionRate * 100);
-      if (shortTextBoost > 0) {
-        vocabularyAnalysis.shortTextAdjustment = shortTextBoost;
-      }
-      
-      // Add suggestions for premium
-      if (tier === 'premium' && vocabularyDiversity < 0.7) {
-        vocabularyAnalysis.suggestions = [
-          {
-            word: 'good',
-            alternatives: ['excellent', 'outstanding', 'superb', 'magnificent'],
-            context: 'general description'
-          }
-        ];
-      }
-    }
-    
-    // Generate feedback
-    const maxFeedback = TIER_FEATURES[tier].maxFeedbackPoints;
-
-    // Use vocabulary score for feedback instead of diversity alone
-    if (score >= 75) {
-      feedback.push('Excellent vocabulary diversity!');
-    } else if (score >= 60) {
-      feedback.push('Good vocabulary usage');
-    } else {
-      feedback.push('Try using more varied vocabulary');
-    }
-
-    if (avgWordLength > 6) {
-      feedback.push('Strong word choice with advanced vocabulary');
-    } else if (avgWordLength < 4) {
-      feedback.push('Consider using more descriptive words');
-    }
-    
-    if (academicPercentage > 15 && TIER_FEATURES[tier].detailedExplanations) {
-      feedback.push('Great use of academic vocabulary!');
-    }
-
-    if (repetitionRate > 0.35) {
-      feedback.push('Reduce repeated words to broaden vocabulary impact.');
-    }
-    
-    // Limit feedback based on tier
-    if (feedback.length > maxFeedback) {
-      feedback.splice(maxFeedback);
-    }
-
-    const metrics: VocabularyCategoryMetrics = {
-      score,
-      rangeScore,
-      repetitionPenalty,
-      diversity: Number((vocabularyDiversity * 100).toFixed(2)),
-      repetitionRate: Number((repetitionRate * 100).toFixed(2)),
-      academicUsage: Math.round(academicPercentage),
-      rareWordUsage: Math.round(rareWordRatio * 100),
-    };
-    
-    return { score, errors, feedback, vocabularyAnalysis, metrics };
-  }
-
-  /**
    * Analyze tone and formality (Pro+ feature)
    */
-  private analyzeTone(message: string): any {
-    const formalWords = ['furthermore', 'however', 'therefore', 'consequently', 'nevertheless'];
-    const informalWords = ['hey', 'yeah', 'cool', 'awesome', 'gonna', 'wanna', 'kinda'];
-    const casualWords = ['hi', 'hello', 'thanks', 'please', 'sorry'];
+  private analyzeTone(message: string, aiPersonality?: string): any {
+    const formalWords = new Set(['furthermore', 'however', 'therefore', 'consequently', 'nevertheless', 'additionally', 'moreover', 'subsequently', 'thus', 'hence', 'accordingly', 'notwithstanding', 'whereas', 'hereby', 'thereby', 'ensure', 'facilitate', 'utilize', 'demonstrate', 'implement']);
+    const informalWords = new Set(['hey', 'yeah', 'cool', 'awesome', 'gonna', 'wanna', 'kinda', 'sorta', 'dunno', 'lemme', 'gimme', 'cause', 'cuz', 'till', 'yep', 'nope', 'guy', 'dude', 'bro', 'crap']);
+    const assertiveWords = new Set(['must', 'will', 'definitely', 'absolutely', 'certainly', 'ensure', 'require', 'demand', 'vital', 'crucial', 'essential', 'imperative', 'guarantee']);
+    const passiveWords = new Set(['maybe', 'perhaps', 'possibly', 'might', 'could', 'think', 'feel', 'guess', 'hope', 'try', 'somewhat', 'somehow', 'usually', 'probably']);
     
-    const words = message.toLowerCase().split(/\s+/);
-    const formalCount = words.filter(w => formalWords.includes(w)).length;
-    const informalCount = words.filter(w => informalWords.includes(w)).length;
-    const casualCount = words.filter(w => casualWords.includes(w)).length;
+    const words = message.toLowerCase().split(/[\s,.-]+/);
+    let formalCount = 0; let informalCount = 0; let assertiveCount = 0; let passiveCount = 0;
+    
+    words.forEach(w => {
+      if (formalWords.has(w)) formalCount++;
+      if (informalWords.has(w)) informalCount++;
+      if (assertiveWords.has(w)) assertiveCount++;
+      if (passiveWords.has(w)) passiveCount++;
+    });
+
+    const totalWords = words.length;
+    const formalityScore = Math.max(0, Math.min(100, 50 + (formalCount * 15) - (informalCount * 15)));
+    const assertivenessScore = Math.max(0, Math.min(100, 50 + (assertiveCount * 15) - (passiveCount * 15)));
     
     let tone: 'formal' | 'neutral' | 'informal' | 'casual' = 'neutral';
-    let confidence = 50;
+    if (formalityScore >= 75) tone = 'formal';
+    else if (formalityScore <= 25) tone = 'casual';
+    else if (formalityScore <= 45) tone = 'informal';
     
-    if (formalCount > 2) {
-      tone = 'formal';
-      confidence = Math.min(90, 50 + formalCount * 10);
-    } else if (informalCount > 2) {
-      tone = 'informal';
-      confidence = Math.min(90, 50 + informalCount * 10);
-    } else if (casualCount > 3) {
-      tone = 'casual';
-      confidence = Math.min(90, 50 + casualCount * 8);
+    const confidence = Math.min(95, 40 + (formalCount + informalCount + assertiveCount + passiveCount) * 5);
+    
+    const recommendations: string[] = [];
+    let contextAppropriate = true;
+
+    // AIPersonality Tone Matching Logic
+    if (aiPersonality) {
+      const p = aiPersonality.toLowerCase();
+      if ((p === 'formal' || p === 'strict') && (tone === 'casual' || tone === 'informal')) {
+        contextAppropriate = false;
+        recommendations.push(`Notice: You are speaking to a '${aiPersonality}' AI, but your tone is ${tone}. Try using more professional language.`);
+      } else if ((p === 'casual' || p === 'friendly' || p === 'humorous') && tone === 'formal') {
+        contextAppropriate = false;
+        recommendations.push(`Notice: You are speaking to a '${aiPersonality}' AI, but your tone is quite formal. Feel free to relax your language!`);
+      }
+    }
+
+    if (tone === 'casual' || tone === 'informal') {
+      recommendations.push('Consider using more formal language for professional or academic contexts (e.g. replace "yeah" with "yes", "gonna" with "going to").');
+    } else if (tone === 'formal') {
+      recommendations.push('Your tone is formal and professional, which is excellent for business and academic contexts.');
     }
     
+    if (assertivenessScore < 40) {
+      recommendations.push('Your language appears slightly passive. Consider using more assertive words like "will" or "ensure" instead of "might" or "maybe".');
+    } else if (assertivenessScore > 80) {
+      recommendations.push('Your tone is highly assertive. Ensure this matches your intended context.');
+    }
+
     return {
       overall: tone,
+      formalityScore,
+      assertivenessScore,
       confidence,
-      contextAppropriate: true, // Simplified - would need context to determine
-      recommendations: tone === 'formal' ? ['Maintain professional tone'] : 
-                      tone === 'casual' ? ['Consider more formal language for professional contexts'] : 
-                      ['Tone is appropriate for most contexts']
+      contextAppropriate,
+      recommendations
     };
   }
+
 
   /**
    * Calculate readability metrics (Pro+ feature)
    */
   private calculateReadability(message: string, statistics: any): any {
-    const words = message.split(/\s+/).filter(w => w.length > 0);
+    const words = message.toLowerCase().split(/[\s,.-]+/).filter(w => w.length > 0);
     const sentences = message.split(/[.!?]+/).filter(s => s.trim().length > 0);
-    const syllables = words.reduce((sum, word) => sum + this.countSyllables(word), 0);
     
+    if (words.length === 0 || sentences.length === 0) {
+      return { fleschKincaidGrade: 0, fleschReadingEase: 0, smogIndex: 0, colemanLiauIndex: 0, automatedReadabilityIndex: 0, averageLevel: 'Elementary', recommendation: 'Not enough text.' };
+    }
+
+    const syllables = words.reduce((sum, word) => sum + this.countSyllables(word), 0);
+    const letters = message.replace(/[^a-zA-Z]/g, '').length;
+    
+    const wordCount = words.length;
+    const sentenceCount = sentences.length;
+    const syllableCount = syllables;
+    const complexWords = words.filter(w => this.countSyllables(w) >= 3).length;
+
     // Flesch Reading Ease
-    const avgSentenceLength = words.length / Math.max(sentences.length, 1);
-    const avgSyllablesPerWord = syllables / Math.max(words.length, 1);
-    const fleschReadingEase = Math.max(0, Math.min(100, 
-      206.835 - (1.015 * avgSentenceLength) - (84.6 * avgSyllablesPerWord)
-    ));
+    const fleschReadingEase = Math.max(0, Math.min(100, 206.835 - (1.015 * (wordCount / sentenceCount)) - (84.6 * (syllableCount / wordCount))));
     
     // Flesch-Kincaid Grade Level
-    const fleschKincaidGrade = Math.max(0, 
-      (0.39 * avgSentenceLength) + (11.8 * avgSyllablesPerWord) - 15.59
-    );
+    const fleschKincaidGrade = (0.39 * (wordCount / sentenceCount)) + (11.8 * (syllableCount / wordCount)) - 15.59;
     
-    // SMOG Index (simplified)
-    const complexWords = words.filter(w => this.countSyllables(w) >= 3).length;
-    const smogIndex = Math.max(0, 
-      1.043 * Math.sqrt(complexWords * (30 / Math.max(sentences.length, 1))) + 3.1291
-    );
+    // SMOG Index
+    const smogIndex = 1.043 * Math.sqrt(complexWords * (30 / sentenceCount)) + 3.1291;
     
-    // Determine average level
+    // Coleman-Liau Index
+    const L = (letters / wordCount) * 100;
+    const S = (sentenceCount / wordCount) * 100;
+    const colemanLiauIndex = (0.0588 * L) - (0.296 * S) - 15.8;
+    
+    // Automated Readability Index (ARI)
+    const automatedReadabilityIndex = (4.71 * (letters / wordCount)) + (0.5 * (wordCount / sentenceCount)) - 21.43;
+    
     let averageLevel = 'Elementary';
-    if (fleschKincaidGrade >= 16) averageLevel = 'Graduate';
-    else if (fleschKincaidGrade >= 13) averageLevel = 'College';
-    else if (fleschKincaidGrade >= 10) averageLevel = 'High School';
-    else if (fleschKincaidGrade >= 7) averageLevel = 'Middle School';
+    const gradeLevel = fleschKincaidGrade;
+    if (gradeLevel >= 16) averageLevel = 'Graduate';
+    else if (gradeLevel >= 13) averageLevel = 'College';
+    else if (gradeLevel >= 9) averageLevel = 'High School';
+    else if (gradeLevel >= 6) averageLevel = 'Middle School';
     
     return {
       fleschKincaidGrade: Math.round(fleschKincaidGrade * 10) / 10,
       fleschReadingEase: Math.round(fleschReadingEase),
       smogIndex: Math.round(smogIndex * 10) / 10,
-      colemanLiauIndex: Math.round(fleschKincaidGrade), // Simplified
-      automatedReadabilityIndex: Math.round(fleschKincaidGrade), // Simplified
+      colemanLiauIndex: Math.round(colemanLiauIndex * 10) / 10,
+      automatedReadabilityIndex: Math.round(automatedReadabilityIndex * 10) / 10,
       averageLevel,
-      recommendation: fleschReadingEase < 30 ? 'Consider simplifying your language' : 
-                      fleschReadingEase > 90 ? 'Consider using more complex sentences' : 
-                      'Readability is appropriate for most audiences'
+      recommendation: fleschReadingEase < 30 ? 'Consider simplifying your language. Use shorter words and sentences for better readability.' : 
+                      fleschReadingEase > 90 ? 'Your text is very simple. Consider using more complex structures for professional contexts.' : 
+                      'Readability is excellent and appropriate for most audiences.'
     };
   }
 
@@ -3929,23 +3798,54 @@ export class UnifiedAccuracyCalculator {
    * Analyze coherence and discourse (Premium feature)
    */
   private analyzeCoherence(message: string): any {
-    const transitions = [
-      'however', 'therefore', 'furthermore', 'moreover', 'consequently',
-      'nevertheless', 'nonetheless', 'meanwhile', 'additionally', 'finally'
-    ];
+    const additive = new Set(['additionally', 'furthermore', 'moreover', 'also', 'besides', 'similarly']);
+    const adversative = new Set(['however', 'nevertheless', 'nonetheless', 'although', 'conversely', 'instead', 'despite']);
+    const causal = new Set(['therefore', 'consequently', 'thus', 'hence', 'accordingly', 'because']);
+    const sequential = new Set(['firstly', 'secondly', 'finally', 'subsequently', 'meanwhile', 'eventually']);
     
-    const words = message.toLowerCase().split(/\s+/);
-    const usedTransitions = words.filter(w => transitions.includes(w)).length;
+    const words = message.toLowerCase().split(/[\s,.-]+/);
+    const sentences = message.split(/[.!?]+/).filter(s => s.trim().length > 0);
+    
+    let transitionCount = 0;
+    let transitionTypes = new Set<string>();
+    
+    words.forEach(w => {
+      if (additive.has(w)) { transitionCount++; transitionTypes.add('additive'); }
+      if (adversative.has(w)) { transitionCount++; transitionTypes.add('adversative'); }
+      if (causal.has(w)) { transitionCount++; transitionTypes.add('causal'); }
+      if (sequential.has(w)) { transitionCount++; transitionTypes.add('sequential'); }
+    });
+
+    // Pronoun checking (Vague referencing)
+    const pronouns = new Set(['it', 'this', 'that', 'these', 'those']);
+    const pronounCount = words.filter(w => pronouns.has(w)).length;
+    const pronounRatio = words.length > 0 ? pronounCount / words.length : 0;
+    
+    const logicalFlowScore = Math.min(100, Math.round(50 + (transitionCount * 10) + (transitionTypes.size * 5) - (pronounRatio > 0.1 ? 20 : 0)));
+    const topicConsistency = Math.min(100, 70 + (transitionCount * 5));
+
+    const issues: string[] = [];
+    const suggested: string[] = [];
+    
+    if (sentences.length > 3 && transitionCount < 2) {
+      issues.push('Consider adding transition words (e.g., however, therefore, furthermore) to connect your sentences and improve logical flow.');
+      suggested.push('however', 'therefore', 'furthermore');
+    }
+    
+    if (pronounRatio > 0.08) {
+      issues.push('High usage of pronouns (it, this, that). Ensure they clearly refer to specific nouns to prevent vagueness.');
+    }
     
     return {
-      score: Math.min(100, 60 + usedTransitions * 8),
+      score: logicalFlowScore,
       transitions: {
-        used: usedTransitions,
-        suggested: usedTransitions < 2 ? ['however', 'therefore', 'furthermore'] : []
+        used: transitionCount,
+        types: Array.from(transitionTypes),
+        suggested
       },
-      topicConsistency: 85, // Simplified - would need topic modeling
-      logicalFlow: Math.min(100, 70 + usedTransitions * 5),
-      issues: usedTransitions === 0 ? ['Consider adding transition words to improve flow'] : []
+      topicConsistency,
+      logicalFlow: logicalFlowScore,
+      issues
     };
   }
 
@@ -3954,28 +3854,53 @@ export class UnifiedAccuracyCalculator {
    */
   private analyzeStyle(message: string): any {
     const sentences = message.split(/[.!?]+/).filter(s => s.trim().length > 0);
-    const words = message.split(/\s+/).filter(w => w.length > 0);
+    const words = message.toLowerCase().split(/[\s,.-]+/).filter(w => w.length > 0);
     
-    // Passive voice detection (simplified)
-    const passivePatterns = /\b(is|was|were|are|been|being)\s+\w+ed\b/gi;
+    if (sentences.length === 0) return { passiveVoiceUsage: 0, sentenceVariety: 100, recommendations: [] };
+
+    // Precise passive voice detection
+    const passivePatterns = /\b(am|is|are|was|were|be|been|being)\s+([a-z]+ed|found|shown|taken|given|made|done|seen|built|left|known)\b/gi;
     const passiveMatches = message.match(passivePatterns) || [];
-    const passiveVoiceUsage = Math.round((passiveMatches.length / Math.max(sentences.length, 1)) * 100);
+    const passiveVoiceUsage = Math.min(100, Math.round((passiveMatches.length / sentences.length) * 100));
     
-    // Sentence variety
+    // Standard deviation for sentence variety
     const sentenceLengths = sentences.map(s => s.split(/\s+/).length);
-    const avgLength = sentenceLengths.reduce((a, b) => a + b, 0) / Math.max(sentenceLengths.length, 1);
-    const variance = sentenceLengths.reduce((sum, len) => sum + Math.pow(len - avgLength, 2), 0) / Math.max(sentenceLengths.length, 1);
-    const sentenceVariety = Math.min(100, Math.round(50 + variance * 2));
+    const avgLength = sentenceLengths.reduce((a, b) => a + b, 0) / sentences.length;
+    const variance = sentenceLengths.reduce((sum, len) => sum + Math.pow(len - avgLength, 2), 0) / sentences.length;
+    const stdDev = Math.sqrt(variance);
     
+    // Good standard deviation is between 3 and 10 (showing variety)
+    let sentenceVariety = 100;
+    if (stdDev < 1.5) sentenceVariety = 40; // Too robotic, identical lengths
+    else if (stdDev < 3) sentenceVariety = 70; // Okay but could be better
+    else if (stdDev > 15) sentenceVariety = 60; // Erratically long/short
+    
+    const recommendations: string[] = [];
+    if (passiveVoiceUsage > 25) {
+      recommendations.push(`You used passive voice in ~${passiveVoiceUsage}% of your sentences. Consider rewriting them in active voice for a stronger, more direct style.`);
+    }
+    
+    if (sentenceVariety <= 50) {
+      recommendations.push('Your sentences are very similar in length. Try mixing short, punchy sentences with longer, complex ones to make your writing more engaging.');
+    } else if (sentenceVariety >= 80) {
+      recommendations.push('Excellent sentence variety. Your writing has a great natural rhythm.');
+    }
+
+    // Check for repetitive starters
+    const starters = sentences.map(s => s.trim().split(/\s+/)[0]?.toLowerCase()).filter(Boolean);
+    const starterCounts = starters.reduce((acc: any, s) => { acc[s] = (acc[s] || 0) + 1; return acc; }, {});
+    const repetitive = Object.entries(starterCounts).filter(([_, count]) => (count as number) > 2);
+    if (repetitive.length > 0) {
+      recommendations.push(`You started multiple sentences with "${repetitive[0][0]}". Try to vary your sentence beginnings.`);
+    }
+
     return {
       passiveVoiceUsage,
       sentenceVariety,
-      repetitionIssues: 0, // Simplified
-      formalityScore: 75, // Simplified
+      repetitionIssues: repetitive.length,
+      formalityScore: 75,
       engagement: Math.round(70 + sentenceVariety * 0.3),
-      recommendations: passiveVoiceUsage > 30 ? ['Consider using more active voice'] : 
-                       sentenceVariety < 40 ? ['Vary sentence length for better flow'] : 
-                       ['Writing style is effective']
+      recommendations
     };
   }
 
@@ -4095,7 +4020,11 @@ export class UnifiedAccuracyCalculator {
    */
   private analyzePremiumFeatures(message: string, tier: UserTier, errors: UnifiedErrorDetail[]): any {
     const features = TIER_FEATURES[tier];
-    const words = message.match(/\b\w+\b/g) || [];
+    if (tier !== 'premium' && tier !== 'pro') {
+      return { foundIdioms: [], collocationIssues: [], sentenceRewrites: [], advancedVocabSuggestions: [], professionalTips: [], contextualSuggestions: [], advancedPatterns: { detected: [], recommendations: [] } };
+    }
+    
+    const words = message.toLowerCase().split(/[\s,.-]+/);
     const sentences = message.split(/[.!?]+/).filter(s => s.trim().length > 0);
     const lowerMessage = message.toLowerCase();
     
@@ -4111,38 +4040,39 @@ export class UnifiedAccuracyCalculator {
       { phrase: 'under the weather', meaning: 'Feeling ill or sick', level: 'B1' },
       { phrase: 'beat around the bush', meaning: 'To avoid talking about what is important', level: 'C1' },
       { phrase: 'call it a day', meaning: 'To stop working for the day', level: 'B1' },
+      { phrase: 'bite the bullet', meaning: 'To decide to do something difficult or unpleasant', level: 'C1' },
+      { phrase: 'cut corners', meaning: 'To do something perfunctorily to save time or money', level: 'B2' },
+      { phrase: 'get out of hand', meaning: 'To get out of control', level: 'B2' }
     ];
     
-    const foundIdioms = commonIdioms.filter(idiom => 
-      lowerMessage.includes(idiom.phrase)
-    );
+    const foundIdioms = commonIdioms.filter(idiom => lowerMessage.includes(idiom.phrase));
 
     // Advanced collocation analysis
     const commonCollocations = {
-      'make': ['a decision', 'an effort', 'a mistake', 'progress', 'money', 'a difference'],
-      'take': ['a break', 'a chance', 'responsibility', 'time', 'place'],
-      'do': ['homework', 'business', 'your best', 'damage', 'the dishes'],
-      'have': ['a look', 'a chat', 'fun', 'difficulty', 'an impact']
+      'make': ['a decision', 'an effort', 'a mistake', 'progress', 'money', 'a difference', 'sense', 'sure', 'time'],
+      'take': ['a break', 'a chance', 'responsibility', 'time', 'place', 'action', 'care', 'advantage', 'part'],
+      'do': ['homework', 'business', 'your best', 'damage', 'the dishes', 'a favor', 'research', 'work'],
+      'have': ['a look', 'a chat', 'fun', 'difficulty', 'an impact', 'a seat', 'trouble', 'a word', 'time'],
+      'give': ['advice', 'an answer', 'permission', 'a thought', 'warning', 'a presentation']
     };
     
     const collocationIssues: any[] = [];
     Object.entries(commonCollocations).forEach(([verb, correctNouns]) => {
-      if (lowerMessage.includes(verb)) {
-        // Check for incorrect collocations
-        const verbPattern = new RegExp(`${verb}\\s+(\\w+)`, 'gi');
-        const matches = message.match(verbPattern);
-        if (matches) {
-          matches.forEach(match => {
-            const noun = match.split(' ')[1]?.toLowerCase();
-            if (noun && !correctNouns.some(cn => noun.includes(cn))) {
-              // Potential collocation issue
-              collocationIssues.push({
-                phrase: match,
-                correctAlternatives: correctNouns.slice(0, 3),
-                explanation: `"${verb}" typically collocates with: ${correctNouns.slice(0, 3).join(', ')}`
-              });
-            }
-          });
+      const verbPattern = new RegExp(`\\b(?:${verb}|${verb}s|${verb}ing|${verb}ed)\\s+(?:a |an |the |some |any )?(\\w+)`, 'gi');
+      let match;
+      while ((match = verbPattern.exec(message)) !== null) {
+        const noun = match[1]?.toLowerCase();
+        if (noun) {
+          const isCorrect = correctNouns.some(cn => cn.includes(noun));
+          if (!isCorrect && noun === 'mistake' && verb === 'do') {
+            collocationIssues.push({ phrase: match[0], correctAlternatives: ['make a mistake'], explanation: `"Make" is the correct verb to use with "mistake".` });
+          } else if (!isCorrect && noun === 'homework' && verb === 'make') {
+            collocationIssues.push({ phrase: match[0], correctAlternatives: ['do homework'], explanation: `"Do" is the correct verb to use with "homework".` });
+          } else if (!isCorrect && noun === 'decision' && verb === 'do') {
+            collocationIssues.push({ phrase: match[0], correctAlternatives: ['make a decision'], explanation: `"Make" is the correct verb to use with "decision".` });
+          } else if (!isCorrect && noun === 'break' && verb === 'have') {
+             if (Math.random() > 0.5) { collocationIssues.push({ phrase: match[0], correctAlternatives: ['take a break'], explanation: `"Take a break" is often preferred in American English.` }); }
+          }
         }
       }
     });
@@ -4158,20 +4088,20 @@ export class UnifiedAccuracyCalculator {
         if (wordCount > 25) {
           sentenceRewrites.push({
             original: trimmed,
-            suggestion: `Consider breaking into 2 sentences at a logical point`,
-            reason: 'Long sentences can reduce readability',
+            suggestion: `Consider breaking this into 2 sentences at a logical point.`,
+            reason: 'Run-on sentences severely reduce readability and impact.',
             improvedExample: this.generateShorterVersion(trimmed)
           });
         }
         
         // Passive voice suggestions
-        if (/\b(is|was|were|are|been)\s+\w+ed\b/i.test(trimmed)) {
+        if (/\b(is|was|were|are|been|being)\s+([a-z]+ed|found|shown|taken|given|made|done|seen)\b/i.test(trimmed)) {
           const activeVersion = this.convertToActiveVoice(trimmed);
           if (activeVersion !== trimmed) {
             sentenceRewrites.push({
               original: trimmed,
               suggestion: activeVersion,
-              reason: 'Active voice is more direct and engaging',
+              reason: 'Active voice is more direct, engaging, and professional.',
               improvedExample: activeVersion
             });
           }
@@ -4183,15 +4113,16 @@ export class UnifiedAccuracyCalculator {
     const advancedVocabSuggestions: any[] = [];
     if (features.advancedVocabSuggestions) {
       const basicWords = {
-        'good': ['excellent', 'outstanding', 'remarkable', 'exceptional', 'superb'],
-        'bad': ['poor', 'inadequate', 'unsatisfactory', 'substandard', 'inferior'],
-        'big': ['large', 'substantial', 'considerable', 'significant', 'extensive'],
-        'small': ['minor', 'minimal', 'modest', 'limited', 'negligible'],
-        'very': ['extremely', 'highly', 'remarkably', 'exceptionally', 'particularly'],
-        'a lot': ['numerous', 'substantial', 'considerable', 'significant', 'abundant'],
-        'get': ['obtain', 'acquire', 'receive', 'attain', 'secure'],
-        'make': ['create', 'produce', 'generate', 'construct', 'form'],
-        'think': ['believe', 'consider', 'assume', 'suppose', 'reckon']
+        'good': ['exceptional', 'outstanding', 'remarkable', 'superb'],
+        'bad': ['substandard', 'inferior', 'inadequate', 'detrimental'],
+        'big': ['substantial', 'considerable', 'significant', 'extensive'],
+        'small': ['minor', 'minimal', 'modest', 'negligible'],
+        'very': ['extremely', 'highly', 'remarkably', 'exceptionally'],
+        'a lot': ['numerous', 'substantial', 'considerable', 'abundant'],
+        'get': ['obtain', 'acquire', 'attain', 'secure'],
+        'make': ['generate', 'produce', 'construct', 'formulate'],
+        'think': ['believe', 'consider', 'assume', 'postulate'],
+        'important': ['crucial', 'vital', 'imperative', 'essential']
       };
       
       Object.entries(basicWords).forEach(([basic, advanced]) => {
@@ -4200,8 +4131,8 @@ export class UnifiedAccuracyCalculator {
           advancedVocabSuggestions.push({
             basicWord: basic,
             advancedAlternatives: advanced,
-            usageExample: `Instead of "${basic}", try: "${advanced[0]}" or "${advanced[1]}"`,
-            cefrLevel: 'B2-C1',
+            usageExample: `Instead of "${basic}", elevate your tone by using: "${advanced[0]}" or "${advanced[1]}".`,
+            cefrLevel: 'C1',
             context: 'Academic and professional writing'
           });
         }
@@ -4212,81 +4143,49 @@ export class UnifiedAccuracyCalculator {
     const professionalTips: string[] = [];
     if (features.professionalTips) {
       if (sentences.length < 3) {
-        professionalTips.push('✨ Pro Tip: Aim for 3-5 sentences to fully develop your ideas');
-      }
-      
-      if (words.length < 30) {
-        professionalTips.push('✨ Pro Tip: Elaborate more on your points for better clarity and impact');
+        professionalTips.push('✨ Pro Tip: Aim for 3-5 sentences to fully develop and structure your ideas.');
       }
       
       const academicWordCount = words.filter(w => ACADEMIC_WORDS.has(w.toLowerCase())).length;
       const academicPercentage = (academicWordCount / words.length) * 100;
       
-      if (academicPercentage < 5) {
-        professionalTips.push('✨ Pro Tip: Use more academic vocabulary to sound more professional (target: 5-15%)');
+      if (academicPercentage < 5 && words.length > 15) {
+        professionalTips.push('✨ Pro Tip: Use more academic vocabulary to sound more professional (target: 5-15% of your text).');
       }
       
-      if (!/\b(however|therefore|furthermore|moreover|consequently)\b/i.test(message)) {
-        professionalTips.push('✨ Pro Tip: Add transition words (however, therefore, furthermore) for better flow');
+      if (!/\b(however|therefore|furthermore|moreover|consequently|additionally)\b/i.test(message)) {
+        professionalTips.push('✨ Pro Tip: Add transition words to ensure your ideas flow logically from one to the next.');
       }
       
-      const contractions = message.match(/\b(don't|can't|won't|didn't|isn't|aren't)\b/gi);
+      const contractions = message.match(/\b(don't|can't|won't|didn't|isn't|aren't|haven't|hasn't)\b/gi);
       if (contractions && contractions.length > 0) {
-        professionalTips.push(`✨ Pro Tip: Avoid contractions in formal writing (found ${contractions.length})`);
+        professionalTips.push(`✨ Pro Tip: Avoid contractions (like "${contractions[0]}") in strictly formal or academic writing.`);
       }
     }
 
-    // Contextual suggestions based on message analysis
-    const contextualSuggestions: string[] = [];
-    const errorTypes = Array.from(new Set(errors.map(e => e.type)));
-    
-    if (errorTypes.includes('grammar')) {
-      contextualSuggestions.push('💡 Focus on subject-verb agreement and sentence structure');
-    }
-    if (errorTypes.includes('spelling')) {
-      contextualSuggestions.push('💡 Review common spelling patterns and use spell-check tools');
-    }
-    if (words.length < 20) {
-      contextualSuggestions.push('💡 Expand your response with more details and examples');
-    }
-    if (sentences.length < 2) {
-      contextualSuggestions.push('💡 Use multiple sentences to organize your thoughts better');
-    }
-    
     // Advanced pattern detection (PREMIUM)
     const advancedPatterns = {
       detected: [] as string[],
       recommendations: [] as string[]
     };
     
-    if (tier === 'premium') {
-      // Detect writing patterns
+    if (tier === 'premium' || tier === 'pro') {
       if (/\b(I think|I believe|I feel)\b/gi.test(message)) {
-        advancedPatterns.detected.push('Personal opinion expressions');
-        advancedPatterns.recommendations.push('Consider using "It appears that" or "Research suggests" for formal writing');
+        advancedPatterns.detected.push('Subjective opinion phrasing');
+        advancedPatterns.recommendations.push('For formal writing, consider objective phrasing like "Evidence suggests" or "It appears that".');
       }
       
-      if (/\b(thing|stuff|something)\b/gi.test(message)) {
-        advancedPatterns.detected.push('Vague language detected');
-        advancedPatterns.recommendations.push('Replace vague words with specific terms for clarity');
+      if (/\b(thing|stuff|something|anything|everything)\b/gi.test(message)) {
+        advancedPatterns.detected.push('Vague language');
+        advancedPatterns.recommendations.push('Replace vague nouns with highly specific, concrete terms for greater clarity.');
       }
       
-      const questionMarks = (message.match(/\?/g) || []).length;
-      if (questionMarks > 2) {
-        advancedPatterns.detected.push('Multiple questions');
-        advancedPatterns.recommendations.push('Consider breaking into separate messages for better organization');
-      }
-      
-      // Check for repetitive sentence starters
-      const starters = sentences.map(s => s.trim().split(' ')[0]?.toLowerCase()).filter(Boolean);
-      const starterCounts = starters.reduce((acc: any, s) => {
-        acc[s] = (acc[s] || 0) + 1;
-        return acc;
-      }, {});
+      const starters = sentences.map(s => s.trim().split(/\s+/)[0]?.toLowerCase()).filter(Boolean);
+      const starterCounts = starters.reduce((acc: any, s) => { acc[s] = (acc[s] || 0) + 1; return acc; }, {});
       const repetitive = Object.entries(starterCounts).filter(([_, count]) => (count as number) > 1);
       if (repetitive.length > 0) {
         advancedPatterns.detected.push('Repetitive sentence starters');
-        advancedPatterns.recommendations.push(`Vary sentence beginnings - you started ${repetitive.length} sentences the same way`);
+        advancedPatterns.recommendations.push(`Vary sentence beginnings - you started ${repetitive.length} sentences with "${repetitive[0][0]}".`);
       }
     }
 
@@ -4312,7 +4211,7 @@ export class UnifiedAccuracyCalculator {
       sentenceRewrites: sentenceRewrites.slice(0, features.maxSuggestions || 5),
       advancedVocabulary: advancedVocabSuggestions.slice(0, features.maxSuggestions || 5),
       professionalTips: professionalTips.slice(0, Math.min(5, features.maxFeedbackPoints || 3)),
-      contextualSuggestions: contextualSuggestions.slice(0, 10),
+      contextualSuggestions: [],
       advancedPatterns: advancedPatterns,
       premiumBadges: tier === 'premium' ? ['🏆 Expert Analysis', '⭐ Native-level Insights', '🎯 Personalized Recommendations'] : []
     };
@@ -4423,9 +4322,9 @@ export class UnifiedAccuracyCalculator {
     
     const baseCategoryWeights = {
       grammar: 0.40,      // 40% weight - highest priority for English correctness
-      vocabulary: 0.20,   // 20% weight - word choice and appropriateness
-      spelling: 0.20,     // 20% weight - orthographic accuracy
-      fluency: 0.15,      // 15% weight - naturalness and flow
+      fluency: 0.30,      // 30% weight - naturalness and flow are critical for conversational English
+      spelling: 0.15,     // 15% weight - orthographic accuracy
+      vocabulary: 0.10,   // 10% weight - word choice and appropriateness
       punctuation: 0.03,  // 3% weight - minor formatting
       capitalization: 0.02 // 2% weight - minor formatting
     };

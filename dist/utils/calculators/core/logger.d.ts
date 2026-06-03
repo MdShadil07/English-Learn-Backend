@@ -1,8 +1,7 @@
-import pino from 'pino';
-export declare const logger: pino.Logger<never, boolean>;
-export declare const nlpLogger: pino.Logger<never, boolean>;
-export declare const xpLogger: pino.Logger<never, boolean>;
-export declare const cacheLogger: pino.Logger<never, boolean>;
-export declare const performanceLogger: pino.Logger<never, boolean>;
+export declare const logger: any;
+export declare const nlpLogger: any;
+export declare const xpLogger: any;
+export declare const cacheLogger: any;
+export declare const performanceLogger: any;
 export default logger;
 //# sourceMappingURL=logger.d.ts.map

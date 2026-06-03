@@ -14,20 +14,17 @@ const progressSchema = new Schema({
         ref: 'User',
         required: [true, 'User ID is required'],
         unique: true,
-        index: true,
     },
     // ========== LEVELING & XP ==========
     totalXP: {
         type: Number,
         default: 0,
         min: [0, 'Total XP cannot be negative'],
-        index: true,
     },
     currentLevel: {
         type: Number,
         default: 1,
         min: [1, 'Level must be at least 1'],
-        index: true,
     },
     currentLevelXP: {
         type: Number,
@@ -48,7 +45,6 @@ const progressSchema = new Schema({
         type: String,
         enum: ['beginner', 'intermediate', 'advanced', 'expert', 'master'],
         default: 'beginner',
-        index: true,
     },
     tier: {
         type: Number,
@@ -67,8 +63,8 @@ const progressSchema = new Schema({
         total: { type: Number, default: 0 },
     },
     dailyXP: { type: Number, default: 0 },
-    weeklyXP: { type: Number, default: 0, index: true },
-    monthlyXP: { type: Number, default: 0, index: true },
+    weeklyXP: { type: Number, default: 0 },
+    monthlyXP: { type: Number, default: 0 },
     yearlyXP: { type: Number, default: 0 },
     xpHistory: [{
             date: { type: Date, required: true },
@@ -117,7 +113,7 @@ const progressSchema = new Schema({
         // FREE NLP Enhancement Data
         freeNLPEnhanced: { type: Boolean, default: false },
         nlpCost: { type: String, default: '$0/month' },
-        vocabularyLevel: { type: String, default: 'A1', enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'], index: true }, // CEFR level for analytics
+        vocabularyLevel: { type: String, default: 'A1', enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] }, // CEFR level for analytics
         // Detector Contributions (nested object for analytics)
         detectorContributions: {
             languageTool: {
@@ -208,7 +204,7 @@ const progressSchema = new Schema({
             messageCount: { type: Number, default: 0 },
             lastUpdated: { type: Date, default: null },
         },
-        lastCalculated: { type: Date, default: Date.now, index: true }, // Index for recent activity queries
+        lastCalculated: { type: Date, default: Date.now }, // Index for recent activity queries
         calculationCount: { type: Number, default: 0 },
     },
     accuracyHistory: [{
@@ -239,7 +235,6 @@ const progressSchema = new Schema({
         default: 0,
         min: 0,
         max: 100,
-        index: true,
     },
     // ========== LEVEL-UP TRACKING ==========
     levelUpHistory: [{
@@ -274,7 +269,7 @@ const progressSchema = new Schema({
     // ========== ADVANCED STREAK SYSTEM ==========
     streak: {
         // Basic streak data
-        current: { type: Number, default: 0, min: 0, index: true },
+        current: { type: Number, default: 0, min: 0 }, // Current active streak (days)
         longest: { type: Number, default: 0, min: 0 },
         lastActivityDate: { type: Date, default: null },
         streakStartDate: { type: Date, default: null },
@@ -418,7 +413,6 @@ const progressSchema = new Schema({
     lastActive: {
         type: Date,
         default: Date.now,
-        index: true,
     },
 }, {
     timestamps: true, // Auto-creates createdAt and updatedAt
@@ -426,64 +420,48 @@ const progressSchema = new Schema({
     toObject: { virtuals: true },
 });
 // ========================================
-// INDEXES FOR PERFORMANCE & ANALYTICS
+// ENTERPRISE-OPTIMIZED INDEXES
 // ========================================
-// ===== LEADERBOARD QUERIES =====
-// Global leaderboard (by XP and level)
+// ===== USER LOOKUP & AUTH =====
+// ===== LEADERBOARD & ANALYTICS =====
+// Global leaderboards (optimized for millions of users)
 progressSchema.index({ totalXP: -1, currentLevel: -1 });
-// Weekly leaderboard
 progressSchema.index({ weeklyXP: -1, lastActive: -1 });
-// Monthly leaderboard
 progressSchema.index({ monthlyXP: -1, lastActive: -1 });
-// Streak leaderboard
-progressSchema.index({ 'streak.current': -1, lastActive: -1 });
-// Accuracy leaderboard
-progressSchema.index({ overallAccuracy: -1, 'accuracyData.calculationCount': -1 });
-// ===== SKILL-BASED LEADERBOARDS =====
-// Grammar masters leaderboard
-progressSchema.index({ 'accuracyData.grammar': -1, 'accuracyData.calculationCount': -1 });
-// Vocabulary champions leaderboard
-progressSchema.index({ 'accuracyData.vocabulary': -1, 'accuracyData.vocabularyLevel': -1 });
-// Spelling experts leaderboard
-progressSchema.index({ 'accuracyData.spelling': -1, 'accuracyData.calculationCount': -1 });
-// Fluency masters leaderboard
-progressSchema.index({ 'accuracyData.fluency': -1, 'accuracyData.calculationCount': -1 });
+progressSchema.index({ overallAccuracy: -1, lastActive: -1 });
+// Skill-based leaderboards
+progressSchema.index({ 'accuracyData.grammar': -1, overallAccuracy: -1 });
+progressSchema.index({ 'accuracyData.vocabulary': -1, overallAccuracy: -1 });
+progressSchema.index({ 'accuracyData.spelling': -1, overallAccuracy: -1 });
+progressSchema.index({ 'accuracyData.fluency': -1, overallAccuracy: -1 });
 // ===== CEFR LEVEL ANALYTICS =====
-// Vocabulary level distribution
 progressSchema.index({ 'accuracyData.vocabularyLevel': 1, overallAccuracy: -1 });
-// Level-based progression tracking
-progressSchema.index({ 'accuracyData.vocabularyLevel': 1, currentLevel: -1, totalXP: -1 });
-// ===== USER LOOKUP =====
-progressSchema.index({ userId: 1 }, { unique: true });
-// ===== ANALYTICS QUERIES =====
-// Proficiency-based cohorts
-progressSchema.index({ proficiencyLevel: 1, currentLevel: -1, overallAccuracy: -1 });
-// Recent activity tracking
-progressSchema.index({ lastActive: -1, totalXP: -1 });
-// Active users in last 7 days
+progressSchema.index({ proficiencyLevel: 1, currentLevel: -1, totalXP: -1 });
+// ===== ACTIVITY & STREAK TRACKING =====
 progressSchema.index({ lastActive: -1, 'streak.current': -1 });
-// Calculation history for trends
+progressSchema.index({ 'streak.current': -1, lastActive: -1 });
+progressSchema.index({ lastActive: -1, totalXP: -1 });
+// ===== PERFORMANCE & CACHING =====
 progressSchema.index({ 'accuracyData.lastCalculated': -1, userId: 1 });
-// ===== CATEGORY-SPECIFIC QUERIES =====
-progressSchema.index({ 'categories.name': 1, 'categories.accuracy': -1 });
-progressSchema.index({ 'categories.name': 1, 'categories.xpEarned': -1 });
-// ===== NLP PERFORMANCE ANALYTICS =====
-// Processing time optimization
 progressSchema.index({ 'accuracyData.performanceMetrics.totalProcessingTime': 1 });
-// Free NLP users
 progressSchema.index({ 'accuracyData.freeNLPEnhanced': 1, lastActive: -1 });
-// Cache efficiency tracking
-progressSchema.index({ 'accuracyData.performanceMetrics.cacheHits': -1 });
-// ===== IMPROVEMENT TRACKING =====
-// Users showing improvement
-progressSchema.index({ 'analytics.improvementRate': -1, lastActive: -1 });
-// Consistency leaders
-progressSchema.index({ 'analytics.consistencyScore': -1, 'streak.current': -1 });
-// ===== TIER & LEVEL SEGMENTATION =====
-// Premium users analytics
+// ===== TIER & SUBSCRIPTION ANALYTICS =====
 progressSchema.index({ tier: 1, totalXP: -1, overallAccuracy: -1 });
-// Prestige system
 progressSchema.index({ prestigeLevel: -1, totalXP: -1 });
+// ===== TTL INDEXES FOR AUTOMATIC CLEANUP =====
+// Cleanup old accuracy history (keep last 100 entries)
+progressSchema.index({ 'accuracyData.lastCalculated': 1 }, {
+    expireAfterSeconds: 7776000, // 90 days
+    partialFilterExpression: { 'accuracyData.lastCalculated': { $exists: true } }
+});
+// Cleanup inactive users (30 days)
+progressSchema.index({ lastActive: 1 }, {
+    expireAfterSeconds: 2592000, // 30 days
+    partialFilterExpression: {
+        'streak.current': 0,
+        totalXP: { $lt: 100 }
+    }
+});
 // ========================================
 // VIRTUAL PROPERTIES
 // ========================================

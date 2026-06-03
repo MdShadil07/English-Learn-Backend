@@ -48,7 +48,6 @@ const AiChatSettingsSchema = new Schema<IAiChatSettings>(
       ref: 'User',
       required: true,
       unique: true,
-      index: true
     },
     responseLanguage: {
       type: String,
@@ -97,7 +96,6 @@ const AiChatSettingsSchema = new Schema<IAiChatSettings>(
 );
 
 // Indexes
-AiChatSettingsSchema.index({ userId: 1 }, { unique: true });
 AiChatSettingsSchema.index({ createdAt: 1 });
 AiChatSettingsSchema.index({ updatedAt: 1 });
 

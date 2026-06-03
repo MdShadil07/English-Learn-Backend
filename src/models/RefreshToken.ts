@@ -41,10 +41,18 @@ const refreshTokenSchema = new Schema<IRefreshToken>(
   }
 );
 
-// Indexes for better performance
-refreshTokenSchema.index({ userId: 1 });
-refreshTokenSchema.index({ expiresAt: 1 });
-refreshTokenSchema.index({ isRevoked: 1 });
+// Optimized indexes for token management
+refreshTokenSchema.index({ userId: 1, expiresAt: 1 });
+refreshTokenSchema.index({ isRevoked: 1, expiresAt: 1 });
+
+// TTL index for automatic cleanup
+refreshTokenSchema.index(
+  { expiresAt: 1 },
+  {
+    expireAfterSeconds: 604800, // 7 days
+    partialFilterExpression: { isRevoked: false }
+  }
+);
 
 // Static method to find valid token
 refreshTokenSchema.statics.findValidToken = function (token: string, userId: mongoose.Types.ObjectId) {

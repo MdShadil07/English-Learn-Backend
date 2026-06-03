@@ -13,7 +13,12 @@ class DatabaseConnection {
             console.log('🔄 Connecting to MongoDB...');
             this.connection = await mongoose.connect(MONGODB_URI, {
                 // Connection pooling configuration for scalability
-                maxPoolSize: 20, // Maximum number of connections in the connection pool
+                // maxPoolSize sizing: API_INSTANCES × CONNECTIONS_PER_INSTANCE
+                // Small (500 users): 1 instance × 20 = 20 connections
+                // Medium (5k users): 5 instances × 50 = 250 connections
+                // Large (40k users): 10 instances × 50 = 500 connections
+                // Enterprise (80k users): 20 instances × 50 = 1000 connections
+                maxPoolSize: parseInt(process.env.MONGODB_MAX_POOL_SIZE || '20', 10),
                 minPoolSize: 5, // Minimum number of connections in the connection pool
                 maxIdleTimeMS: 30000, // Close connections after 30 seconds of inactivity
                 serverSelectionTimeoutMS: 5000, // Keep trying to send operations for 5 seconds

@@ -389,7 +389,7 @@ export class AdvancedStreakService {
    */
   static async getStreakStatus(
     userId: string | Types.ObjectId,
-    tier: 'free' | 'pro' | 'premium'
+    tier: 'free' | 'pro' | 'premium' = 'premium'
   ): Promise<StreakStatusResponse> {
     const progress = await Progress.findOne({ userId });
     

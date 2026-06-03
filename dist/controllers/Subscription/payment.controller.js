@@ -230,7 +230,7 @@ export async function confirmPaymentHandler(req, res) {
                 // Fetch subscription details from Razorpay to get end date
                 const rpSub = await razorpaySub.fetchSubscription(razorpay_subscription_id);
                 if (rpSub.current_end) {
-                    sub.endAt = new Date(rpSub.current_end * 1000);
+                    sub.expiresAt = new Date(rpSub.current_end * 1000);
                 }
                 await sub.save();
                 await updateUserSubscription(sub.userId, sub);
@@ -270,7 +270,7 @@ export async function webhookHandler(req, res) {
             const sub = await Subscription.findOne({ 'razorpay.subscriptionId': subId });
             if (sub) {
                 sub.status = 'active';
-                sub.endAt = new Date(event.payload.subscription.entity.current_end * 1000);
+                sub.expiresAt = new Date(event.payload.subscription.entity.current_end * 1000);
                 await sub.save();
                 await updateUserSubscription(sub.userId, sub);
             }

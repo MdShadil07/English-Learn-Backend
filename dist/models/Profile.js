@@ -26,7 +26,6 @@ const profileSchema = new Schema({
     timestamps: true,
 });
 // Legacy indexes - keeping minimal for backward compatibility
-profileSchema.index({ userId: 1 }, { unique: true });
 const Profile = mongoose.model('Profile', profileSchema);
 export default Profile;
 //# sourceMappingURL=Profile.js.map

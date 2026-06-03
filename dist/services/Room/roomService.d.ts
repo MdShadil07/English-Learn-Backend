@@ -10,6 +10,7 @@ export interface CreateRoomData {
     bannerFontSize?: number;
     maxParticipants?: number;
     isPrivate?: boolean;
+    mode?: 'smallGroup' | 'classroom' | 'webinar';
 }
 export interface RoomParticipant {
     userId: string;
@@ -29,6 +30,8 @@ export interface RoomDetails {
     bannerIsItalic?: boolean;
     bannerFontSize?: number;
     hostId: string;
+    hostName?: string;
+    hostAvatar?: string;
     moderators: string[];
     participants: RoomParticipant[];
     maxParticipants: number;
@@ -39,6 +42,7 @@ export interface RoomDetails {
     participantCount: number;
     isFull: boolean;
     sfuUrl?: string;
+    mode?: 'smallGroup' | 'classroom' | 'webinar';
 }
 export declare class RoomService {
     /**

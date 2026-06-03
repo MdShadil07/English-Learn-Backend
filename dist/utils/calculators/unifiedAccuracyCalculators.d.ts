@@ -151,8 +151,15 @@ export interface UnifiedAccuracyResult {
     tone?: {
         overall: 'formal' | 'neutral' | 'informal' | 'casual';
         confidence: number;
+        formalityScore: number;
+        assertivenessScore: number;
         recommendations?: string[];
         contextAppropriate: boolean;
+    };
+    style?: {
+        score: number;
+        passiveVoiceUsage: number;
+        sentenceLengthVariance: number;
     };
     readability?: {
         fleschKincaidGrade: number;
@@ -327,6 +334,7 @@ export interface AccuracyAnalysisOptions {
     redisClient?: any;
     historicalWeighting?: HistoricalWeightingConfig;
     languageContext?: LanguageDetectionSummary;
+    aiPersonality?: string;
 }
 export declare class UnifiedAccuracyCalculator {
     private readonly NLP_ENABLED;
@@ -369,10 +377,6 @@ export declare class UnifiedAccuracyCalculator {
      * Analyze spelling using comprehensive database
      */
     private analyzeSpelling;
-    /**
-     * Analyze vocabulary using comprehensive assessment with ACADEMIC_WORDS
-     */
-    private analyzeVocabulary;
     /**
      * Analyze tone and formality (Pro+ feature)
      */

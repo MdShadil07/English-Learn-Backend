@@ -9,6 +9,8 @@ export interface IUser extends Document {
   lastName?: string;
   username?: string;
   role: 'student' | 'teacher' | 'admin';
+  accountStatus: 'active' | 'suspended' | 'banned' | 'deleted';
+  statusReason?: string;
   
   // OAuth authentication fields
   googleAuth?: {
@@ -23,10 +25,17 @@ export interface IUser extends Document {
     linkedBy?: 'manual' | 'sso_first_time' | 'email_verification';
   };
   
+  // Password Reset fields
+  resetPasswordToken?: string;
+  resetPasswordExpires?: Date;
+  
   // Email verification
   isEmailVerified: boolean;
   welcomeEmailSent: boolean;
+  isVerified?: boolean;
+  verificationStatus?: 'none' | 'pending' | 'verified' | 'rejected';
   lastLoginAt?: Date;
+  lastActiveAt?: Date;
   
   // Quick-access subscription snapshot
   subscription: {
@@ -40,9 +49,23 @@ export interface IUser extends Document {
   createdAt: Date;
   updatedAt: Date;
   fullName: string;
-  tier: 'free' | 'pro' | 'premium';
+  tier: {
+      type: String,
+      enum: ['free', 'pro', 'premium'],
+      default: 'premium',
+    };
   subscriptionStatus: 'active' | 'expired' | 'none';
   subscriptionEndDate?: Date | null;
+  pronunciationProfile?: {
+    accentLocale: string;
+    weakPhonemes: Array<{ phoneme: string; score: number; updatedAt: Date }>;
+    speechProfile: {
+      averagePronunciationScore: number;
+      averageWordsPerMinute: number;
+      averageAsrConfidence: number;
+      lastProcessedAt?: Date | null;
+    };
+  };
   comparePassword(candidatePassword: string): Promise<boolean>;
   getFullName(): string;
   toJSON(): any;
@@ -103,6 +126,14 @@ const userSchema = new Schema<IUser>(
       default: 'student',
       required: [true, 'Role is required'],
     },
+    accountStatus: {
+      type: String,
+      enum: ['active', 'suspended', 'banned', 'deleted'],
+      default: 'active',
+    },
+    statusReason: {
+      type: String,
+    },
     // OAuth authentication fields
     googleAuth: {
       googleId: {
@@ -137,11 +168,30 @@ const userSchema = new Schema<IUser>(
         default: null,
       },
     },
+    
+    // Password Reset
+    resetPasswordToken: {
+      type: String,
+      select: false,
+    },
+    resetPasswordExpires: {
+      type: Date,
+      select: false,
+    },
+
     // Email verification
     isEmailVerified: {
       type: Boolean,
       default: false,
-      index: true,
+    },
+    isVerified: {
+      type: Boolean,
+      default: false,
+    },
+    verificationStatus: {
+      type: String,
+      enum: ['none', 'pending', 'verified', 'rejected'],
+      default: 'none',
     },
     welcomeEmailSent: {
       type: Boolean,
@@ -151,18 +201,20 @@ const userSchema = new Schema<IUser>(
       type: Date,
       default: null,
     },
-    // Denormalized subscription fields stored inside user for fast access
+    lastActiveAt: {
+      type: Date,
+      default: null,
+    },
+    // Subscription fields for fast access
     subscription: {
       planCode: {
         type: String,
-        default: 'FREE',
-        index: true,
+        default: 'PREMIUM',
       },
       status: {
         type: String,
         enum: ['active', 'expired', 'none'],
         default: 'none',
-        index: true,
       },
       expiresAt: {
         type: Date,
@@ -178,6 +230,28 @@ const userSchema = new Schema<IUser>(
         default: null,
       },
     },
+    pronunciationProfile: {
+      accentLocale: {
+        type: String,
+        default: 'en-IN',
+      },
+      weakPhonemes: {
+        type: [
+          {
+            phoneme: { type: String, required: true },
+            score: { type: Number, default: 0 },
+            updatedAt: { type: Date, default: Date.now },
+          },
+        ],
+        default: [],
+      },
+      speechProfile: {
+        averagePronunciationScore: { type: Number, default: 0 },
+        averageWordsPerMinute: { type: Number, default: 0 },
+        averageAsrConfidence: { type: Number, default: 0 },
+        lastProcessedAt: { type: Date, default: null },
+      },
+    },
   },
   {
     timestamps: true,
@@ -186,28 +260,27 @@ const userSchema = new Schema<IUser>(
   }
 );
 
-// Performance optimized indexes
+// Performance optimized indexes for enterprise scale
 userSchema.index({ createdAt: -1 });
-userSchema.index({ 'subscription.status': 1 });
-userSchema.index({ 'subscription.expiresAt': 1 });
-userSchema.index({ 'googleAuth.googleId': 1 });
+userSchema.index({ role: 1, createdAt: -1 });
 
-// Compound indexes for common query patterns (Phase 1 scalability)
+// Compound indexes for common query patterns (optimized for millions of users)
 userSchema.index({ 
   'subscription.status': 1, 
-  'subscription.expiresAt': 1 
+  'subscription.expiresAt': 1, 
+  createdAt: -1
 });
 userSchema.index({ 
   isEmailVerified: 1, 
   createdAt: -1 
 });
 userSchema.index({ 
-  role: 1, 
-  createdAt: -1 
-});
-userSchema.index({ 
   'googleAuth.isLinked': 1, 
   'googleAuth.linkedAt': -1 
+});
+userSchema.index({ 
+  lastLoginAt: -1, 
+  'subscription.status': 1 
 });
 
 // TTL index for cleanup of unverified accounts (30 days)
@@ -255,8 +328,28 @@ userSchema.pre('save', async function (next) {
 
 // Instance method to check password
 userSchema.methods.comparePassword = async function (candidatePassword: string): Promise<boolean> {
-  const user = this as unknown as IUser;
-  return bcrypt.compare(candidatePassword, user.password);
+  const user = this as any;
+
+  try {
+    if (typeof candidatePassword !== 'string' || candidatePassword.length === 0) {
+      // Invalid candidate password supplied
+      return false;
+    }
+
+    const stored = user.password;
+    if (typeof stored !== 'string' || stored.length === 0) {
+      // Stored password missing (likely not selected in the query)
+      console.warn('comparePassword: stored password is missing for user', user._id ? user._id.toString() : '(unknown)');
+      return false;
+    }
+
+    // bcrypt.compare can throw if arguments are invalid; wrap in try/catch
+    const result = await bcrypt.compare(candidatePassword, stored);
+    return !!result;
+  } catch (err) {
+    console.error('comparePassword error:', err);
+    return false;
+  }
 };
 
 // Instance method to get full name
@@ -289,7 +382,11 @@ userSchema.statics.findByRole = function (role: string) {
 userSchema.methods.toJSON = function () {
   const user = this as unknown as IUser;
   const userObject = (user as any).toObject ? (user as any).toObject() : { ...user };
-  if (userObject && typeof userObject === 'object') delete userObject.password;
+  if (userObject && typeof userObject === 'object') {
+    delete userObject.password;
+    delete userObject.resetPasswordToken;
+    delete userObject.resetPasswordExpires;
+  }
   return userObject;
 };
 

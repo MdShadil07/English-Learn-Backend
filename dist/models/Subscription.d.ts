@@ -7,15 +7,13 @@ export interface ISubscription extends Document {
     planType: 'monthly' | 'yearly' | 'lifetime' | 'manual';
     status: 'active' | 'canceled' | 'expired' | 'pending';
     startAt: Date;
-    endAt: Date | null;
+    expiresAt: Date | null;
     canceledAt?: Date;
     reason?: string;
     autoRenew: boolean;
     paymentMethod?: string;
     transactionId?: string;
     billingRetries?: number;
-    endDate?: Date | null;
-    razorpaySubscriptionId?: string;
     razorpay: {
         subscriptionId?: string;
         orderId?: string;

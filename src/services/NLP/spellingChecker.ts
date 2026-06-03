@@ -32,7 +32,7 @@ interface SpellingError {
 }
 
 class SpellingCheckerService {
-  private static readonly WORD_REGEX = /^[a-zA-Z]+$/;
+  private static readonly WORD_REGEX = /^[a-zA-Z]+('[a-zA-Z]+)?$/;
   private dictionary: Typo | null = null;
   private initialized: boolean = false;
   private initializationFailed: boolean = false;
@@ -136,12 +136,12 @@ class SpellingCheckerService {
   }
 
   check(word: string): boolean {
-    // If dictionary isn't available, assume correctness — don't create false negatives.
+    // If dictionary isn't available, assume correctness - don't create false negatives.
     if (!this.dictionary) return true;
     
     // Clean the word
     const normalizedInput = normalizeTypographicQuotes(word);
-    const cleanWord = normalizedInput.trim().replace(/[.,!?;:"']/g, '');
+    const cleanWord = normalizedInput.trim().replace(/[.,!?;:"()\[\]{}]/g, '').replace(/^'+|'+$/g, '');
     if (!cleanWord || cleanWord.length < 2) return true;
     
     // Skip numbers and special characters
@@ -157,14 +157,21 @@ class SpellingCheckerService {
     if (cleanWord.includes('-')) {
       const segments = cleanWord.split('-').filter(Boolean);
       if (segments.length >= 2) {
-        const allSegmentsCorrect = segments.every((segment: string) => segment.length <= 1 || this.dictionary!.check(segment.toLowerCase()));
+        const allSegmentsCorrect = segments.every((segment: string) => segment.length <= 1 || this.dictionary!.check(segment.toLowerCase()) || this.dictionary!.check(segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase()));
         if (allSegmentsCorrect) {
           return true;
         }
       }
     }
     
-    const isCorrect = this.dictionary.check(cleanWord);
+    let isCorrect = this.dictionary.check(cleanWord);
+    
+    // Typo.js is case-sensitive for proper nouns. If the lowercase check fails,
+    // try checking the title-cased version to avoid penalizing words like "english".
+    if (!isCorrect && cleanWord === cleanWord.toLowerCase()) {
+      const capitalized = cleanWord.charAt(0).toUpperCase() + cleanWord.slice(1);
+      isCorrect = this.dictionary.check(capitalized);
+    }
     
     if (process.env.NODE_ENV === 'development') {
       console.log(`  🔍 Checking word: "${cleanWord}"`);
@@ -181,7 +188,7 @@ class SpellingCheckerService {
     if (!this.dictionary) return [];
     
   const normalizedInput = normalizeTypographicQuotes(word);
-  const cleanWord = normalizedInput.trim().replace(/[.,!?;:"']/g, '');
+  const cleanWord = normalizedInput.trim().replace(/[.,!?;:"()\[\]{}]/g, '').replace(/^'+|'+$/g, '');
     if (!cleanWord) return [];
 
     const normalized = cleanWord.toLowerCase();
@@ -242,7 +249,7 @@ class SpellingCheckerService {
     }
     
     for (const word of words) {
-      const cleanWord = word.replace(/[.,!?;:\"'()\[\]{}]/g, '').trim();
+      const cleanWord = word.trim().replace(/[.,!?;:"()\[\]{}]/g, '').replace(/^'+|'+$/g, '');
 
       // Only consider alphabetic tokens (skip punctuation, numbers, ellipses, etc.)
       if (!cleanWord || cleanWord.length < 2 || !SpellingCheckerService.WORD_REGEX.test(cleanWord)) {

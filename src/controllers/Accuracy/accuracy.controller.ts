@@ -201,6 +201,8 @@ const computeNextMilestone = (score?: number | null): AccuracyMilestone | null =
  * Handles message analysis and accuracy calculations
  */
 
+import User from '../../models/User.js';
+
 export class AccuracyController {
  
 
@@ -232,14 +234,21 @@ export class AccuracyController {
         });
       }
 
-      const tier = normalizeTier(userTier);
-      const proficiency = typeof userLevel === 'string' ? (userLevel as UserProficiencyLevel) : undefined;
-
       let validatedUserId: string | undefined;
       let effectivePreviousAccuracy: Partial<IAccuracyData> | undefined;
+      let validatedTier = userTier;
 
       if (isValidObjectId(userId)) {
         validatedUserId = userId;
+
+        try {
+          const userRecord = await User.findById(validatedUserId).select('tier').lean();
+          if (userRecord && userRecord.tier) {
+            validatedTier = userRecord.tier;
+          }
+        } catch (err) {
+          console.warn('[Accuracy] Could not fetch user tier, using fallback.', err);
+        }
 
         if (previousAccuracy && typeof previousAccuracy === 'object') {
           effectivePreviousAccuracy = previousAccuracy as Partial<IAccuracyData>;
@@ -247,6 +256,9 @@ export class AccuracyController {
       } else if (userId) {
         console.warn('[Accuracy] Received invalid userId; skipping weighted merge.');
       }
+
+      const tier = normalizeTier(validatedTier);
+      const proficiency = typeof userLevel === 'string' ? (userLevel as UserProficiencyLevel) : undefined;
 
       console.log('[Accuracy] analyzeMessage', {
         userId: validatedUserId,
@@ -261,6 +273,7 @@ export class AccuracyController {
         userTier: tier,
         userLevel: proficiency,
         previousAccuracy: effectivePreviousAccuracy,
+        persistToDatabase: false,
       });
 
       const accuracySummary = {

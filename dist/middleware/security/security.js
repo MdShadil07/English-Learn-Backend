@@ -28,6 +28,7 @@ export const corsOptions = {
         const envOrigins = [
             process.env.FRONTEND_URL,
             process.env.CLIENT_URL,
+            process.env.ADMIN_FRONTEND_URL,
             ...(process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()) ?? []),
         ].filter(Boolean);
         const allowedOrigins = [...new Set([...baseOrigins, ...envOrigins])];

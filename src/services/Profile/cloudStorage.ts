@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import { promisify } from 'util';
+import { telemetryService } from '../../services/telemetryService.js';
 
 interface CloudStorageConfig {
   provider: 'supabase' | 'local';
@@ -153,6 +154,7 @@ class CloudStorageService {
       throw new Error(`Storage bucket '${this.config.bucket}' not found. Please create it in your Supabase dashboard.`);
     }
 
+    const start = Date.now();
     // Upload file to Supabase storage
     const { data, error } = await this.supabase.storage
       .from(this.config.bucket)
@@ -163,9 +165,12 @@ class CloudStorageService {
       });
 
     if (error) {
+      telemetryService.recordServiceCall('supabase', Date.now() - start, true);
       console.error('Supabase upload error:', error);
       throw new Error(`Failed to upload file to Supabase: ${error.message}`);
     }
+
+    telemetryService.recordServiceCall('supabase', Date.now() - start, false);
 
     // Get public URL
     const { data: { publicUrl } } = this.supabase.storage

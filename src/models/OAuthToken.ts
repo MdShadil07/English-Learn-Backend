@@ -51,7 +51,6 @@ const oauthTokenSchema = new Schema<IOAuthToken>(
     expiresAt: {
       type: Date,
       required: [true, 'Expiration date is required'],
-      index: true,
     },
     scopes: {
       type: [String],

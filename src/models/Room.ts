@@ -12,6 +12,7 @@ export interface IRoom extends Document {
   bannerIsBold?: boolean;
   bannerIsItalic?: boolean;
   bannerFontSize?: number;
+  mode?: 'smallGroup' | 'classroom' | 'webinar';
   hostId: mongoose.Types.ObjectId; // User who created the room
   maxParticipants: number; // Maximum number of participants (default: 500)
   isPrivate: boolean; // Whether the room is private
@@ -83,6 +84,11 @@ const roomSchema = new Schema<IRoom, IRoomModel>(
       type: Number,
       default: 24
     },
+    mode: {
+      type: String,
+      enum: ['smallGroup', 'classroom', 'webinar'],
+      default: 'classroom',
+    },
     hostId: {
       type: Schema.Types.ObjectId,
       ref: 'User',
@@ -123,15 +129,21 @@ const roomSchema = new Schema<IRoom, IRoomModel>(
   }
 );
 
-// Indexes for performance
-roomSchema.index({ roomId: 1 });
-roomSchema.index({ roomCode: 1 });
-roomSchema.index({ createdAt: -1 });
-roomSchema.index({ hostId: 1 });
-roomSchema.index({ status: 1 });
-roomSchema.index({ hostId: 1, status: 1 });
-roomSchema.index({ blockedUsers: 1 });
-roomSchema.index({ moderators: 1 });
+// Optimized indexes for room management
+roomSchema.index({ roomCode: 1 }, { unique: true, sparse: true });
+roomSchema.index({ hostId: 1, status: 1, createdAt: -1 });
+roomSchema.index({ status: 1, createdAt: -1 });
+roomSchema.index({ isPrivate: 1, status: 1 });
+roomSchema.index({ maxParticipants: 1, isPrivate: 1 });
+
+// TTL index for inactive room cleanup
+roomSchema.index(
+  { lastActivity: 1 },
+  {
+    expireAfterSeconds: 2592000, // 30 days
+    partialFilterExpression: { status: 'closed' }
+  }
+);
 
 // Static methods
 roomSchema.statics.findByRoomId = function (roomId: string) {

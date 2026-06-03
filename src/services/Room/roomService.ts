@@ -27,6 +27,7 @@ export interface CreateRoomData {
   bannerFontSize?: number;
   maxParticipants?: number;
   isPrivate?: boolean;
+  mode?: 'smallGroup' | 'classroom' | 'webinar';
 }
 
 export interface RoomParticipant {
@@ -48,6 +49,8 @@ export interface RoomDetails {
   bannerIsItalic?: boolean;
   bannerFontSize?: number;
   hostId: string;
+  hostName?: string;
+  hostAvatar?: string;
   moderators: string[];
   participants: RoomParticipant[];
   maxParticipants: number;
@@ -58,6 +61,7 @@ export interface RoomDetails {
   participantCount: number;
   isFull: boolean;
   sfuUrl?: string;
+  mode?: 'smallGroup' | 'classroom' | 'webinar';
 }
 
 export class RoomService {
@@ -65,43 +69,60 @@ export class RoomService {
    * Create a new practice room
    */
   async createRoom(data: CreateRoomData): Promise<RoomDetails> {
-    const { 
-      hostId, topic, description, banner, 
-      bannerText, bannerFontFamily, bannerIsBold, bannerIsItalic, bannerFontSize,
-      maxParticipants = 500, isPrivate = false 
-    } = data;
+    try {
+      const { 
+        hostId, topic, description, banner, 
+        bannerText, bannerFontFamily, bannerIsBold, bannerIsItalic, bannerFontSize,
+        maxParticipants = 500, isPrivate = false, mode = 'classroom'
+      } = data;
 
-    if (maxParticipants < 1 || maxParticipants > 500) {
-      throw new Error('Maximum participants must be between 1 and 500');
+      if (maxParticipants < 1 || maxParticipants > 500) {
+        throw new Error('Maximum participants must be between 1 and 500');
+      }
+
+      const roomId = generateRoomId();
+      // Generate a unique 6-char code for private rooms
+      const roomCode = isPrivate ? generateRoomCode() : undefined;
+
+      const room = new Room({
+        roomId,
+        roomCode,
+        topic: topic?.substring(0, 100) || 'English Practice Room',
+        description: description?.substring(0, 500),
+        banner,
+        bannerText,
+        bannerFontFamily,
+        bannerIsBold,
+        bannerIsItalic,
+        bannerFontSize,
+        hostId: new Types.ObjectId(hostId),
+        maxParticipants,
+        isPrivate,
+        mode,
+        status: 'active',
+      });
+
+      await room.save();
+      await RoomParticipantModel.create({ roomId, userId: new Types.ObjectId(hostId) });
+      
+      try {
+        await sfuMappingService.assignRoomToSFUServer(roomId);
+      } catch (sfuError) {
+        console.warn(`[RoomService] Failed to assign SFU to room ${roomId}:`, sfuError);
+        // Do not throw, allow room creation to succeed
+      }
+
+      try {
+        await webSocketService.notifyRoomCreated(roomId, hostId);
+      } catch (wsError) {
+        console.warn(`[RoomService] Failed to notify websocket for room ${roomId}:`, wsError);
+      }
+
+      return await this.formatRoomDetails(room, hostId);
+    } catch (error) {
+      console.error('[RoomService] createRoom error:', error);
+      throw error;
     }
-
-    const roomId = generateRoomId();
-    // Generate a unique 6-char code for private rooms
-    const roomCode = isPrivate ? generateRoomCode() : undefined;
-
-    const room = new Room({
-      roomId,
-      roomCode,
-      topic,
-      description,
-      banner,
-      bannerText,
-      bannerFontFamily,
-      bannerIsBold,
-      bannerIsItalic,
-      bannerFontSize,
-      hostId: new Types.ObjectId(hostId),
-      maxParticipants,
-      isPrivate,
-      status: 'active',
-    });
-
-    await room.save();
-    await RoomParticipantModel.create({ roomId, userId: new Types.ObjectId(hostId) });
-    await sfuMappingService.assignRoomToSFUServer(roomId);
-    await webSocketService.notifyRoomCreated(roomId, hostId);
-
-    return await this.formatRoomDetails(room, hostId);
   }
 
   /**
@@ -265,10 +286,13 @@ export class RoomService {
    */
   private async formatRoomDetails(room: any, requestingUserId?: string): Promise<RoomDetails> {
     const participantRecords = await RoomParticipantModel.find({ roomId: room.roomId }).sort({ joinedAt: 1 });
-    const participantIds = participantRecords.map(p => p.userId);
+    const participantIdsStr = participantRecords.map(p => p.userId.toString());
+    const hostIdStr = room.hostId.toString();
+    const allUserIdsStr = [...new Set([...participantIdsStr, hostIdStr])];
+    const allUserIds = allUserIdsStr.map(id => new Types.ObjectId(id));
     
-    const users = await User.find({ _id: { $in: participantIds } }).select('_id username firstName lastName');
-    const profiles = await UserProfile.find({ userId: { $in: participantIds } }).select('userId avatar_url');
+    const users = await User.find({ _id: { $in: allUserIds } }).select('_id username firstName lastName');
+    const profiles = await UserProfile.find({ userId: { $in: allUserIds } }).select('userId avatar_url');
 
     const userMap = new Map();
     const profileMap = new Map();
@@ -281,7 +305,7 @@ export class RoomService {
     });
     profiles.forEach((p: any) => { profileMap.set(p.userId.toString(), p.avatar_url); });
 
-    const participants: RoomParticipant[] = participantIds.map((id: Types.ObjectId) => {
+    const participants: RoomParticipant[] = participantRecords.map(p => p.userId).map((id: Types.ObjectId) => {
       const idStr = id.toString();
       const u = userMap.get(idStr);
       return { userId: idStr, username: u?.username, fullName: u?.fullName, avatar: profileMap.get(idStr) };
@@ -309,6 +333,10 @@ export class RoomService {
       });
     }
 
+    const hostUser = userMap.get(hostIdStr);
+    const hostAvatar = profileMap.get(hostIdStr);
+    const hostName = hostUser?.fullName || hostUser?.username || 'Host';
+
     return {
       roomId: room.roomId,
       // Only expose roomCode and blockedUsers to the host
@@ -322,7 +350,9 @@ export class RoomService {
       bannerIsBold: room.bannerIsBold,
       bannerIsItalic: room.bannerIsItalic,
       bannerFontSize: room.bannerFontSize,
-      hostId: room.hostId.toString(),
+      hostId: hostIdStr,
+      hostName,
+      hostAvatar,
       moderators: (room.moderators || []).map((id: Types.ObjectId) => id.toString()),
       participants,
       maxParticipants: room.maxParticipants,
@@ -330,9 +360,10 @@ export class RoomService {
       isLocked: room.isLocked || false,
       status: room.status,
       createdAt: room.createdAt,
-      participantCount: participantIds.length,
-      isFull: participantIds.length >= room.maxParticipants,
+      participantCount: participantRecords.length,
+      isFull: participantRecords.length >= room.maxParticipants,
       sfuUrl,
+      mode: room.mode || 'classroom',
     };
   }
 }

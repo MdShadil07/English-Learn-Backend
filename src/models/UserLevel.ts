@@ -29,7 +29,6 @@ const userLevelSchema = new Schema<IUserLevel>(
       type: String,
       required: [true, 'User ID is required'],
       unique: true,
-      index: true,
     },
     userName: {
       type: String,
@@ -115,7 +114,6 @@ const userLevelSchema = new Schema<IUserLevel>(
 );
 
 // Indexes for better performance
-userLevelSchema.index({ userId: 1 }, { unique: true });
 userLevelSchema.index({ totalXP: -1 });
 userLevelSchema.index({ level: -1 });
 

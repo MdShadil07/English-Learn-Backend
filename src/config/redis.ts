@@ -26,6 +26,7 @@ interface CacheConfig {
   exists: (key: string) => Promise<number>;
   isConnected: () => boolean;
   getClient: () => any | null;
+  createBullMQClient: () => any;
 }
 
 class RedisCache implements CacheConfig {
@@ -179,6 +180,15 @@ class RedisCache implements CacheConfig {
       return this.client;
     }
     return null;
+  }
+
+  // BullMQ requires dedicated, non-shared Redis connections with maxRetriesPerRequest: null
+  // because it uses blocking commands (like BRPOP) which would otherwise freeze the main app.
+  createBullMQClient(): any {
+    return new (Redis as any)(this.REDIS_URL, {
+      maxRetriesPerRequest: null,
+      enableReadyCheck: false,
+    });
   }
 
   // Cache helper methods

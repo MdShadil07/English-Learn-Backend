@@ -5,6 +5,7 @@ import SubscriptionPlan from '../../models/SubscriptionPlan.js';
 import User from '../../models/User.js';
 import * as razorpaySub from '../../services/razorpay.subscription.service.js';
 import { redisCache } from '../../config/redis.js';
+import subscriptionValidationService from '../../services/Subscription/subscriptionValidation.service.js';
 
 interface AuthRequest extends Request {
   user?: any;
@@ -72,17 +73,20 @@ export class SubscriptionController {
         return res.status(401).json({ success: false, message: 'Authentication required' });
       }
 
-      const sub = await Subscription.findActiveByUserId(req.user._id);
+      // Use the validation service for consistent subscription status
+      const subStatus = await subscriptionValidationService.getUserSubscriptionStatus(req.user._id);
       
       // If no active subscription, return free tier status
-      if (!sub) {
+      if (!subStatus.subscription) {
         return res.json({
           success: true,
           data: {
-            tier: 'free',
-            isPremium: false,
-            features: this.getTierFeatures('free'),
+            tier: 'premium',
+            isPremium: true,
+            features: this.getTierFeatures('premium'),
             subscription: null,
+            daysRemaining: null,
+            isExpired: false
           },
         });
       }
@@ -90,10 +94,12 @@ export class SubscriptionController {
       return res.json({
         success: true,
         data: {
-          tier: sub.tier,
-          isPremium: sub.tier === 'premium' || sub.tier === 'pro',
-          features: this.getTierFeatures(sub.tier),
-          subscription: sub.toObject(),
+          tier: subStatus.activeTier,
+          isPremium: subStatus.activeTier === 'premium' || subStatus.activeTier === 'pro',
+          features: this.getTierFeatures(subStatus.activeTier),
+          subscription: subStatus.subscription,
+          daysRemaining: subStatus.daysRemaining,
+          isExpired: subStatus.isExpired
         },
       });
 
@@ -255,8 +261,8 @@ export class SubscriptionController {
         return res.status(401).json({ success: false, message: 'Authentication required' });
       }
 
-      const sub = await Subscription.findActiveByUserId(req.user._id);
-      const activeTier = sub ? sub.tier : 'free';
+      // Use the validation service for consistent tier determination
+      const activeTier = await subscriptionValidationService.getActiveTier(req.user._id);
 
       return res.json({
         success: true,

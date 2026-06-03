@@ -9,6 +9,7 @@ import {
   enforcePenalty,
 } from '../Accuracy/penaltyEnforcer.js';
 import { detectLanguage } from '../NLP/languageDetectionService.js';
+import { telemetryService } from '../telemetryService.js';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -53,6 +54,7 @@ export interface GenerateResponseRequest {
       fluency?: number;
     };
   };
+  onChunk?: (chunk: string) => void;
 }
 
 export interface GenerateResponseResponse {
@@ -266,8 +268,9 @@ export class GeminiAIService {
     });
   }
 
-  private getGeminiEndpoint(): string {
-    return `${this.baseUrl}/models/${this.model}:generateContent?key=${this.apiKey}`;
+  private getGeminiEndpoint(stream = false): string {
+    const action = stream ? 'streamGenerateContent?alt=sse&key=' : 'generateContent?key=';
+    return `${this.baseUrl}/models/${this.model}:${action}${this.apiKey}`;
   }
 
   private getFallbackResponse(personalityId: string): string {
@@ -344,27 +347,90 @@ export class GeminiAIService {
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private async sendGeminiRequestWithRetries(requestBody: GeminiRequest, tier: UserTier): Promise<string> {
+  private async sendGeminiRequestWithRetries(requestBody: GeminiRequest, tier: UserTier, onChunk?: (chunk: string) => void): Promise<string> {
     const attempts = this.maxRetries;
-    const url = this.getGeminiEndpoint();
+    const stream = !!onChunk;
+    const url = this.getGeminiEndpoint(stream);
 
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
-        const response: AxiosResponse<GeminiResponse> = await axios.post(url, requestBody, {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: this.requestTimeout,
-        });
+        if (stream) {
+          const response = await axios.post(url, requestBody, {
+            headers: { 'Content-Type': 'application/json' },
+            responseType: 'stream',
+            timeout: this.requestTimeout,
+          });
 
-        const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-        if (!text) {
-          throw new Error('Gemini returned an empty response.');
+          return await new Promise<string>((resolve, reject) => {
+            let fullText = '';
+            let buffer = '';
+            response.data.on('data', (chunk: Buffer) => {
+              buffer += chunk.toString();
+              let lines = buffer.split('\n');
+              buffer = lines.pop() || '';
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  try {
+                    const dataStr = line.substring(6).trim();
+                    if (dataStr === '[DONE]' || !dataStr) continue;
+                    const data = JSON.parse(dataStr);
+                    const textChunk = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                    if (textChunk) {
+                      fullText += textChunk;
+                      onChunk!(textChunk);
+                    }
+                  } catch (e) {
+                    // Ignore parse error
+                  }
+                }
+              }
+            });
+            response.data.on('end', () => {
+              // Process any remaining data left in the buffer
+              if (buffer.trim()) {
+                const remainingLine = buffer.trim();
+                if (remainingLine.startsWith('data: ')) {
+                  try {
+                    const dataStr = remainingLine.substring(6).trim();
+                    if (dataStr && dataStr !== '[DONE]') {
+                      const data = JSON.parse(dataStr);
+                      const textChunk = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                      if (textChunk) {
+                        fullText += textChunk;
+                        onChunk!(textChunk);
+                      }
+                    }
+                  } catch (e) {
+                    // Ignore parse error on trailing buffer
+                  }
+                }
+              }
+
+              if (attempt > 1) {
+                console.log('✅ Gemini request recovered after retry', { attempt });
+              }
+              if (!fullText) reject(new Error('Gemini returned an empty response.'));
+              else resolve(fullText);
+            });
+            response.data.on('error', (err: any) => reject(err));
+          });
+        } else {
+          const response: AxiosResponse<GeminiResponse> = await axios.post(url, requestBody, {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: this.requestTimeout,
+          });
+
+          const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (!text) {
+            throw new Error('Gemini returned an empty response.');
+          }
+
+          if (attempt > 1) {
+            console.log('✅ Gemini request recovered after retry', { attempt });
+          }
+
+          return text;
         }
-
-        if (attempt > 1) {
-          console.log('✅ Gemini request recovered after retry', { attempt });
-        }
-
-        return text;
       } catch (error: any) {
         const willRetry = attempt < attempts && this.shouldRetryGeminiError(error);
         this.logGeminiFailure(error, attempt, willRetry);
@@ -396,7 +462,8 @@ export class GeminiAIService {
       request.userNativeLanguage,
       request.userTier,
       request.responseLanguage,
-      request.userId
+      request.userId,
+      request.onChunk
     );
   }
 
@@ -408,7 +475,8 @@ export class GeminiAIService {
     userNativeLanguage?: string,
     userTier?: string,
     responseLanguage?: string,
-    userId?: string
+    userId?: string,
+    onChunk?: (chunk: string) => void
   ): Promise<GenerateResponseResponse> {
     const recentHistory = conversationHistory.slice(-20);
     const tierValue = normalizeTier(userTier);
@@ -429,6 +497,7 @@ export class GeminiAIService {
     }
 
     const prompt = this.buildPrompt(personality, language, recentHistory, userMessage, userNativeLanguage, userTier, responseLanguage);
+    const startTime = Date.now();
 
     try {
       const requestBody: GeminiRequest = {
@@ -448,7 +517,8 @@ export class GeminiAIService {
         ? this.analyzeMessageInternal(userMessage, userId, tierValue)
         : null;
 
-      const text = await this.sendGeminiRequestWithRetries(requestBody, tierValue);
+      const text = await this.sendGeminiRequestWithRetries(requestBody, tierValue, onChunk);
+      telemetryService.recordServiceCall('aichat', Date.now() - startTime, false);
 
       let accuracy: AccuracyAnalysis | undefined;
       let xpGained: number | undefined;
@@ -464,6 +534,7 @@ export class GeminiAIService {
         xpGained,
       };
     } catch (error: any) {
+      telemetryService.recordServiceCall('aichat', Date.now() - startTime, true);
       console.error('Gemini API error after retries:', this.extractErrorDebugInfo(error));
 
       const fallbackResponse = this.getFallbackResponse(personality.id);

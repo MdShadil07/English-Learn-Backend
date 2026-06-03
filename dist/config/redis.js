@@ -156,6 +156,14 @@ class RedisCache {
         }
         return null;
     }
+    // BullMQ requires dedicated, non-shared Redis connections with maxRetriesPerRequest: null
+    // because it uses blocking commands (like BRPOP) which would otherwise freeze the main app.
+    createBullMQClient() {
+        return new Redis(this.REDIS_URL, {
+            maxRetriesPerRequest: null,
+            enableReadyCheck: false,
+        });
+    }
     // Cache helper methods
     async getJSON(key) {
         try {

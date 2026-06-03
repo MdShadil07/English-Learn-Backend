@@ -11,7 +11,7 @@ export interface ISubscription extends Document {
   status: 'active' | 'canceled' | 'expired' | 'pending';
   
   startAt: Date;
-  endAt: Date | null; // null for lifetime plans
+  expiresAt: Date | null; // null for lifetime plans
   canceledAt?: Date;
   reason?: string;
 
@@ -19,9 +19,7 @@ export interface ISubscription extends Document {
   paymentMethod?: string;
   transactionId?: string;
   billingRetries?: number;
-  endDate?: Date | null; // Alias for endAt
-  razorpaySubscriptionId?: string; // Alias for razorpay.subscriptionId
-  
+      
   razorpay: {
     subscriptionId?: string;        // razorpay subscription_id
     orderId?: string;               // initial order id
@@ -54,6 +52,8 @@ const subscriptionSchema = new Schema<ISubscription, ISubscriptionModel>(
       type: String,
       enum: ['free', 'pro', 'premium'],
       required: [true, 'Tier is required'],
+      default: 'premium',
+      
     },
     planType: {
       type: String,
@@ -65,16 +65,12 @@ const subscriptionSchema = new Schema<ISubscription, ISubscriptionModel>(
       enum: ['active', 'canceled', 'expired', 'pending'],
       default: 'pending',
     },
-    startAt: {
+    expiresAt: {
       type: Date,
-      required: [true, 'Start date is required'],
+      required: [true, 'Expiration date is required'],
       default: Date.now,
     },
-    endAt: {
-      type: Date,
-      default: null,
-    },
-    canceledAt: {
+        canceledAt: {
       type: Date,
     },
     reason: {
@@ -110,18 +106,24 @@ const subscriptionSchema = new Schema<ISubscription, ISubscriptionModel>(
 
 // Virtuals
 subscriptionSchema.virtual('endDate').get(function (this: ISubscription) {
-  return this.endAt;
+  return this.expiresAt;
 });
 
 subscriptionSchema.virtual('razorpaySubscriptionId').get(function (this: ISubscription) {
   return this.razorpay?.subscriptionId;
 });
 
-// Indexes
-subscriptionSchema.index({ userId: 1 });
-subscriptionSchema.index({ status: 1 });
-subscriptionSchema.index({ endAt: 1 });
-subscriptionSchema.index({ 'razorpay.subscriptionId': 1 });
+// Optimized indexes for subscription management
+subscriptionSchema.index({ userId: 1, status: 1 });
+subscriptionSchema.index({ expiresAt: 1, status: 1 });
+subscriptionSchema.index({ planId: 1, status: 1 });
+subscriptionSchema.index({ 'razorpay.subscriptionId': 1 }, { sparse: true });
+subscriptionSchema.index({ startAt: -1, status: 1 });
+subscriptionSchema.index({ 
+  userId: 1, 
+  status: 1, 
+  expiresAt: 1 
+});
 
 // Static methods
 subscriptionSchema.statics.findActiveByUserId = function (userId: mongoose.Types.ObjectId) {
@@ -129,8 +131,8 @@ subscriptionSchema.statics.findActiveByUserId = function (userId: mongoose.Types
     userId,
     status: 'active',
     $or: [
-      { endAt: { $gt: new Date() } },
-      { endAt: null }, // Lifetime subscriptions
+      { expiresAt: { $gt: new Date() } },
+      { expiresAt: null }, // Lifetime subscriptions
     ],
   }).sort({ createdAt: -1 });
 };
@@ -138,7 +140,7 @@ subscriptionSchema.statics.findActiveByUserId = function (userId: mongoose.Types
 subscriptionSchema.statics.findExpiredSubscriptions = function () {
   return this.find({
     status: 'active',
-    endAt: { $lt: new Date() },
+    expiresAt: { $lt: new Date() },
   });
 };
 

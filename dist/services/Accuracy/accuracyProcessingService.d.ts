@@ -9,6 +9,8 @@ export interface AccuracyProcessingParams {
     userLevel?: UserProficiencyLevel | string;
     previousAccuracy?: Partial<IAccuracyData> | null;
     historicalWeighting?: HistoricalWeightingConfig;
+    persistToDatabase?: boolean;
+    aiPersonality?: string;
 }
 export interface AccuracyProcessingResult {
     analysis: UnifiedAccuracyResult;

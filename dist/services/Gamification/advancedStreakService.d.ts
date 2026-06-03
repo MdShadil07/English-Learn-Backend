@@ -82,7 +82,7 @@ export declare class AdvancedStreakService {
     /**
      * Get current streak status
      */
-    static getStreakStatus(userId: string | Types.ObjectId, tier: 'free' | 'pro' | 'premium'): Promise<StreakStatusResponse>;
+    static getStreakStatus(userId: string | Types.ObjectId, tier?: 'free' | 'pro' | 'premium'): Promise<StreakStatusResponse>;
     /**
      * Use streak freeze (Premium only)
      */

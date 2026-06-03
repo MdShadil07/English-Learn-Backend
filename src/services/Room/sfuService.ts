@@ -1,4 +1,5 @@
 import * as mediasoup from 'mediasoup';
+import * as os from 'os';
 import type {
   Worker,
   Router,
@@ -22,9 +23,63 @@ export class SFUService {
   private nextWorkerIndex = 0;
   private rooms: Map<string, RoomState> = new Map();
   private workersReady: Promise<void>;
+  private isOverloaded = false;
+  private monitorInterval: NodeJS.Timeout;
 
   constructor() {
     this.workersReady = this.initializeWorkers();
+    this.monitorInterval = this.startResourceMonitor();
+  }
+
+  private startResourceMonitor(): NodeJS.Timeout {
+    return setInterval(() => {
+      const loadAvg = os.loadavg()[0]; // 1-minute load average
+      const numCpus = os.cpus().length;
+      const loadPercentage = loadAvg / numCpus;
+      
+      const wasOverloaded = this.isOverloaded;
+      // Overload threshold: 85% CPU load
+      this.isOverloaded = loadPercentage > 0.85;
+
+      if (this.isOverloaded && !wasOverloaded) {
+        console.warn('⚠️ SFU Node overloaded. Enabling graceful degradation (audio-only mode).');
+        this.enableGracefulDegradation();
+      } else if (!this.isOverloaded && wasOverloaded) {
+        console.info('✅ SFU Node recovered from overload. Resuming normal operations.');
+        this.disableGracefulDegradation();
+      }
+    }, 10000); // Check every 10 seconds
+  }
+
+  private async enableGracefulDegradation() {
+    for (const room of this.rooms.values()) {
+      for (const consumer of room.consumers.values()) {
+        if (consumer.kind === 'video') {
+          try {
+            // Force lower simulcast layers to save bandwidth/CPU
+            await consumer.setPreferredLayers({ spatialLayer: 0, temporalLayer: 0 });
+            // Alternatively, could pause video entirely: await consumer.pause();
+          } catch (error) {
+            console.error('Error lowering simulcast layers', error);
+          }
+        }
+      }
+    }
+  }
+
+  private async disableGracefulDegradation() {
+    for (const room of this.rooms.values()) {
+      for (const consumer of room.consumers.values()) {
+        if (consumer.kind === 'video') {
+          try {
+            // Restore default preferred layers
+            await consumer.setPreferredLayers({ spatialLayer: 2, temporalLayer: 2 });
+          } catch (error) {
+            console.error('Error restoring simulcast layers', error);
+          }
+        }
+      }
+    }
   }
 
   private async initializeWorkers() {
@@ -107,6 +162,10 @@ export class SFUService {
     const room = this.rooms.get(roomId);
     const transport = room?.transports.get(transportId);
     if (!transport) throw new Error('Transport not found');
+
+    if (kind === 'video' && this.isOverloaded) {
+      throw new Error('SFU is currently overloaded. Video publishing is temporarily disabled.');
+    }
 
     const producer = await transport.produce({ 
       kind, 
@@ -193,8 +252,35 @@ export class SFUService {
   }
 
   public async shutdown(): Promise<void> {
+    clearInterval(this.monitorInterval);
     await Promise.all(this.workers.map((worker) => worker.close()));
     this.workers = [];
+  }
+
+  // --- Transport Recovery Features ---
+
+  public async restartIce(roomId: string, transportId: string): Promise<any> {
+    const transport = this.rooms.get(roomId)?.transports.get(transportId);
+    if (!transport) throw new Error('Transport not found');
+    
+    const iceParameters = await transport.restartIce();
+    return iceParameters;
+  }
+
+  public async recreateConsumer(roomId: string, transportId: string, producerId: string, rtpCapabilities: RtpCapabilities): Promise<any> {
+    // If a transport or consumer dropped due to DTLS/network errors, clients can request a recreate
+    const room = this.rooms.get(roomId);
+    if (!room) throw new Error('Room not found');
+    
+    // Cleanup old consumer if it exists for this producer on this transport
+    for (const [id, consumer] of room.consumers.entries()) {
+      if (consumer.producerId === producerId && consumer.appData.transportId === transportId) {
+        consumer.close();
+        room.consumers.delete(id);
+      }
+    }
+
+    return this.createConsumer(roomId, transportId, producerId, rtpCapabilities);
   }
 }
 

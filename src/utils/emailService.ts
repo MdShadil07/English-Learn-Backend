@@ -35,6 +35,9 @@ const createTransporter = async () => {
       maxMessages: 100, // Send max 100 messages per connection
       rateDelta: 1000, // Rate limit window
       rateLimit: 10, // Max 10 messages per second
+      connectionTimeout: 10000, // 10s timeout for connecting to SMTP server
+      greetingTimeout: 10000,   // 10s timeout for SMTP greeting
+      socketTimeout: 10000,     // 10s timeout for socket idle
       tls: {
         rejectUnauthorized: process.env.NODE_ENV === 'production', // Only verify in production
       },
@@ -53,16 +56,31 @@ const createTransporter = async () => {
 
     return nodemailer.createTransport(transportConfig);
   } else {
-    // Fallback to Ethereal Email for testing (creates a test account)
-    console.log('⚠️  SMTP not configured, using Ethereal Email for testing');
-    return nodemailer.createTransport({
-      host: 'smtp.ethereal.email',
-      port: 587,
-      auth: {
-        user: process.env.ETHEREAL_USER || 'test@ethereal.email',
-        pass: process.env.ETHEREAL_PASS || 'testpass',
-      },
-    });
+        // Fallback to a real Nodemailer test account (Ethereal) for reliable local testing.
+        // This ensures valid credentials and that `nodemailer.getTestMessageUrl(info)` returns a preview URL.
+        try {
+            console.log('⚠️  SMTP not configured, creating Nodemailer test account for local email previews');
+            const testAccount = await nodemailer.createTestAccount();
+            return nodemailer.createTransport({
+                host: 'smtp.ethereal.email',
+                port: 587,
+                secure: false,
+                auth: {
+                    user: testAccount.user,
+                    pass: testAccount.pass,
+                },
+            });
+        } catch (err) {
+            console.warn('⚠️ Failed to create Nodemailer test account, falling back to default ethereal config', err);
+            return nodemailer.createTransport({
+                host: 'smtp.ethereal.email',
+                port: 587,
+                auth: {
+                    user: process.env.ETHEREAL_USER || 'test@ethereal.email',
+                    pass: process.env.ETHEREAL_PASS || 'testpass',
+                },
+            });
+        }
   }
 };
 
@@ -76,15 +94,30 @@ export async function sendEmail(options: EmailOptions): Promise<void> {
       transporter = await createTransporter();
     }
 
-    // Generate HTML content based on template
-    let htmlContent = options.html;
-    if (options.template && !htmlContent) {
-      if (options.template === 'google-linking-verification') {
-        htmlContent = generateGoogleLinkingTemplate(options.data);
-      } else if (options.template === 'welcome') {
-        htmlContent = generateWelcomeTemplate(options.data);
-      }
-    }
+        // Normalize template data and generate HTML content
+        const templateData = options.data || {};
+        let htmlContent = options.html;
+        if (options.template && !htmlContent) {
+            if (options.template === 'google-linking-verification') {
+                htmlContent = generateGoogleLinkingTemplate(templateData);
+            } else if (options.template === 'welcome') {
+                htmlContent = generateWelcomeTemplate(templateData);
+            } else if (options.template === 'password-reset') {
+                htmlContent = generatePasswordResetTemplate(templateData);
+            }
+        }
+
+        // If template generation failed for some reason, fallback to a minimal body
+        if (!htmlContent && options.text) {
+            htmlContent = `<pre>${options.text}</pre>`;
+        }
+
+        // Log template inputs for diagnostics (avoid logging secrets)
+        try {
+            console.log('Email template data keys:', Object.keys(templateData));
+        } catch (e) {
+            // ignore
+        }
 
     // Always send actual email in development (user requested)
     console.log('\n');
@@ -98,15 +131,15 @@ export async function sendEmail(options: EmailOptions): Promise<void> {
     if (options.template === 'google-linking-verification') {
       console.log('\n🔐 GOOGLE ACCOUNT LINKING VERIFICATION');
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      console.log(`👤 User: ${options.data?.userName}`);
-      console.log(`📋 Your Verification Code: ${options.data?.verificationCode}`);
-      console.log(`⏰ Expires At: ${options.data?.expiresAt}`);
+    console.log(`👤 User: ${templateData.userName}`);
+    console.log(`📋 Your Verification Code: ${templateData.verificationCode}`);
+    console.log(`⏰ Expires At: ${templateData.expiresAt}`);
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     } else if (options.template === 'welcome') {
       console.log('\n🎉 WELCOME EMAIL');
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      console.log(`👤 User: ${options.data?.userName}`);
-      console.log(`📧 Email: ${options.to}`);
+    console.log(`👤 User: ${templateData.userName}`);
+    console.log(`📧 Email: ${options.to}`);
       console.log('\n📚 Welcome to English Learning Platform!');
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     }
@@ -124,10 +157,15 @@ export async function sendEmail(options: EmailOptions): Promise<void> {
     
     console.log('✅ Email sent successfully!');
     console.log(`� Message ID: ${info.messageId}`);
-    
-    if (process.env.SMTP_HOST?.includes('ethereal')) {
-      console.log(`� Preview URL: ${nodemailer.getTestMessageUrl(info)}`);
-    }
+        // If Nodemailer provides a preview URL (Ethereal/test account), always log it for debugging.
+        try {
+            const preview = nodemailer.getTestMessageUrl(info);
+            if (preview) {
+                console.log(`� Preview URL: ${preview}`);
+            }
+        } catch (e) {
+            // ignore
+        }
     
     console.log('╔══════════════════════════════════════════════════════════════════════════════╗');
     console.log('║                            END EMAIL SERVICE                                 ║');
@@ -137,6 +175,269 @@ export async function sendEmail(options: EmailOptions): Promise<void> {
     console.error('❌ Email service error:', error);
     throw error;
   }
+}
+
+function generatePasswordResetTemplate(data: any): string {
+  const appUrl = data.appUrl || 'http://localhost:5173';
+  const resetUrl = data.resetUrl || appUrl;
+  const currentYear = new Date().getFullYear();
+  
+  return `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="color-scheme" content="light dark">
+        <meta name="supported-color-schemes" content="light dark">
+        <title>Reset Your Password — CognitoSpeak</title>
+        <style>
+            /* Base resets */
+            body, table, td, p, a, li, blockquote { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+            table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+            img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; }
+            
+            body {
+                margin: 0 !important;
+                padding: 0 !important;
+                background-color: #f8fafc;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                line-height: 1.6;
+                color: #1e293b;
+            }
+            
+            .email-wrapper {
+                width: 100%;
+                max-width: 640px;
+                margin: 0 auto;
+                background-color: #f8fafc;
+            }
+            
+            /* Hero Section */
+            .hero {
+                background: linear-gradient(135deg, #10b981 0%, #14b8a6 50%, #0ea5e9 100%);
+                padding: 48px 32px;
+                text-align: center;
+                border-radius: 0 0 32px 32px;
+                position: relative;
+                overflow: hidden;
+            }
+            
+            .hero::before {
+                content: '';
+                position: absolute;
+                top: -50%;
+                left: -50%;
+                width: 200%;
+                height: 200%;
+                background: radial-gradient(circle at 30% 50%, rgba(255,255,255,0.15) 0%, transparent 60%);
+                pointer-events: none;
+            }
+            
+            .hero-content {
+                position: relative;
+                z-index: 1;
+            }
+            
+            .hero h1 {
+                font-size: 28px;
+                font-weight: 800;
+                color: #ffffff;
+                margin: 0 0 12px 0;
+                line-height: 1.2;
+                letter-spacing: -0.02em;
+            }
+            
+            .hero .subtitle {
+                font-size: 16px;
+                color: rgba(255,255,255,0.95);
+                margin: 0 0 24px 0;
+                font-weight: 500;
+            }
+            
+            .hero-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                background: rgba(255,255,255,0.2);
+                backdrop-filter: blur(8px);
+                border: 1px solid rgba(255,255,255,0.3);
+                padding: 8px 16px;
+                border-radius: 9999px;
+                font-size: 13px;
+                font-weight: 600;
+                color: #ffffff;
+            }
+            
+            /* Content Sections */
+            .content {
+                padding: 40px 32px;
+            }
+            
+            .section {
+                margin-bottom: 32px;
+            }
+            
+            .greeting {
+                font-size: 18px;
+                font-weight: 700;
+                color: #0f172a;
+                margin: 0 0 16px 0;
+            }
+            
+            .lead {
+                font-size: 15px;
+                color: #475569;
+                margin: 0 0 24px 0;
+                line-height: 1.7;
+            }
+            
+            /* CTA Button */
+            .cta-container {
+                text-align: center;
+                margin: 32px 0;
+            }
+            
+            .cta-button {
+                display: inline-block;
+                background: linear-gradient(135deg, #10b981 0%, #0ea5e9 100%);
+                color: #ffffff !important;
+                text-decoration: none;
+                padding: 16px 36px;
+                border-radius: 9999px;
+                font-size: 16px;
+                font-weight: 700;
+                box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
+            }
+            
+            /* Warning Box */
+            .warning-box {
+                background: #fef3c7;
+                border-left: 4px solid #f59e0b;
+                border-radius: 12px;
+                padding: 20px;
+                margin: 24px 0;
+            }
+            
+            .warning-box p {
+                font-size: 14px;
+                color: #92400e;
+                margin: 0;
+                line-height: 1.6;
+            }
+            
+            /* Footer */
+            .footer {
+                text-align: center;
+                padding: 32px;
+                background: #f1f5f9;
+                border-radius: 24px 24px 0 0;
+            }
+            
+            .footer-brand {
+                font-size: 18px;
+                font-weight: 800;
+                color: #0f172a;
+                margin: 0 0 4px 0;
+            }
+            
+            .footer-tagline {
+                font-size: 13px;
+                color: #64748b;
+                margin: 0 0 20px 0;
+            }
+            
+            .footer-text {
+                font-size: 13px;
+                color: #94a3b8;
+                margin: 0;
+            }
+            
+            /* Dark mode support */
+            @media (prefers-color-scheme: dark) {
+                body { background-color: #0f172a !important; }
+                .email-wrapper { background-color: #0f172a !important; }
+                .greeting { color: #f1f5f9 !important; }
+                .lead { color: #cbd5e1 !important; }
+                .warning-box { background: #78350f !important; border-color: #b45309 !important; }
+                .warning-box p { color: #fcd34d !important; }
+                .footer { background: #1e293b !important; }
+                .footer-brand { color: #f1f5f9 !important; }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="email-wrapper">
+            
+            <!-- Hero -->
+            <div class="hero">
+                <div class="hero-content">
+                    <h1>Reset Your Password</h1>
+                    <p class="subtitle">Secure account recovery</p>
+                    <div class="hero-badge">
+                        <span style="font-size:16px;">🔐</span>
+                        <span>Time-Sensitive</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Main Content -->
+            <div class="content">
+                
+                <!-- Greeting -->
+                <div class="section">
+                    <p class="greeting">Hi ${data.userName},</p>
+                    <p class="lead">
+                        We received a request to reset your password for your CognitoSpeak account. 
+                        Click the button below to set a new password. This link will expire in 1 hour for your security.
+                    </p>
+                </div>
+                
+                <!-- CTA -->
+                <div class="cta-container">
+                    <a href="${resetUrl}" class="cta-button">Reset My Password</a>
+                </div>
+                
+                <!-- Fallback Link -->
+                <div class="section" style="text-align: center; margin-top: -16px; margin-bottom: 32px;">
+                    <p style="font-size: 13px; color: #64748b; margin-bottom: 8px;">If the button doesn't work, copy and paste this link into your browser:</p>
+                    <p style="font-size: 12px; color: #0ea5e9; word-break: break-all; margin: 0;">${resetUrl}</p>
+                </div>
+
+                <!-- Warning -->
+                <div class="warning-box">
+                    <p>
+                        <strong>⚠️ Security Notice:</strong> If you did not request a password reset, you can safely ignore this email. Your password will not change unless you click the link above and create a new one.
+                    </p>
+                </div>
+                
+                <!-- Closing -->
+                <div class="section" style="text-align: center; padding: 16px 0;">
+                    <p style="font-size: 15px; color: #475569; margin: 0 0 8px 0;">
+                        Need help? Contact our support team.
+                    </p>
+                    <p style="font-size: 15px; color: #64748b; margin: 0; font-style: italic;">
+                        Best regards,<br>
+                        <strong style="color: #0f172a;">The CognitoSpeak Team</strong>
+                    </p>
+                </div>
+                
+            </div>
+            
+            <!-- Footer -->
+            <div class="footer">
+                <p class="footer-brand">CognitoSpeak</p>
+                <p class="footer-tagline">AI-Powered Learning</p>
+                <p class="footer-text">
+                    © ${currentYear} CognitoSpeak. All rights reserved.<br>
+                    This is an automated message. Please do not reply.
+                </p>
+            </div>
+            
+        </div>
+    </body>
+    </html>
+  `;
 }
 
 function generateGoogleLinkingTemplate(data: any): string {

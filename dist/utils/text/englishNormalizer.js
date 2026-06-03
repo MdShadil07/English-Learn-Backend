@@ -69,7 +69,8 @@ export const expandContractions = (text) => {
     if (!text) {
         return '';
     }
-    let expanded = text.toLowerCase();
+    // First normalize typographic quotes so contractions map works
+    let expanded = normalizeTypographicQuotes(text).toLowerCase();
     for (const [contraction, expansion] of Object.entries(CONTRACTION_MAP)) {
         const regex = new RegExp(`\\b${contraction}\\b`, 'gi');
         expanded = expanded.replace(regex, expansion);
@@ -88,7 +89,7 @@ export const tokenizeAsciiWords = (text) => {
     }
     // Expand contractions before tokenization to handle didn't -> did not, I'm -> I am, etc.
     const expanded = expandContractions(text);
-    const normalized = normalizeTypographicQuotes(expanded).toLowerCase().replace(/-/g, ' ');
+    const normalized = expanded.replace(/-/g, ' ');
     const matches = normalized.match(ASCII_WORD_PATTERN);
     if (!matches) {
         return [];

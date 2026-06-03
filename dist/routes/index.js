@@ -4,4 +4,5 @@ export * from './Progress/index.js';
 export * from './Accuracy/index.js';
 export * from './User/index.js';
 export * from './Room/index.js';
+export * from './Support/index.js';
 //# sourceMappingURL=index.js.map

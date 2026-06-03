@@ -2,15 +2,15 @@ import { Router } from 'express';
 import { authController } from '../../controllers/Auth/auth.controller.js';
 import { authenticate, refreshAuthToken, requireEmailVerification } from '../../middleware/auth/auth.js';
 import { validateRegistration, validateLogin, validateRefreshToken, validateProfileUpdate, validateChangePassword, validatePasswordResetRequest, validatePasswordReset, } from '../../middleware/validation/validation.js';
-import { authRateLimit, passwordResetRateLimit } from '../../middleware/security/rateLimit.js';
+import { authRateLimit, forgotPasswordRateLimit, resetPasswordRateLimit } from '../../middleware/security/rateLimit.js';
 const router = Router();
 // Public routes (no authentication required)
 router.post('/register', authRateLimit, validateRegistration, authController.register);
 router.post('/login', authRateLimit, validateLogin, authController.login);
 router.post('/refresh-token', validateRefreshToken, refreshAuthToken, authController.refreshToken);
 // Password reset routes
-router.post('/forgot-password', passwordResetRateLimit, validatePasswordResetRequest, authController.requestPasswordReset);
-router.post('/reset-password', passwordResetRateLimit, validatePasswordReset, authController.resetPassword);
+router.post('/forgot-password', forgotPasswordRateLimit, validatePasswordResetRequest, authController.requestPasswordReset);
+router.post('/reset-password', resetPasswordRateLimit, validatePasswordReset, authController.resetPassword);
 // Email verification
 router.get('/verify-email', authController.verifyEmail);
 // Google OAuth routes (public - for sign-in)

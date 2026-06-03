@@ -17,7 +17,8 @@ import {
 } from '../../middleware/validation/validation.js';
 import {
   authRateLimit,
-  passwordResetRateLimit
+  forgotPasswordRateLimit,
+  resetPasswordRateLimit
 } from '../../middleware/security/rateLimit.js';
 
 const router = Router();
@@ -28,8 +29,8 @@ router.post('/login', authRateLimit, validateLogin, authController.login);
 router.post('/refresh-token', validateRefreshToken, refreshAuthToken, authController.refreshToken);
 
 // Password reset routes
-router.post('/forgot-password', passwordResetRateLimit, validatePasswordResetRequest, authController.requestPasswordReset);
-router.post('/reset-password', passwordResetRateLimit, validatePasswordReset, authController.resetPassword);
+router.post('/forgot-password', forgotPasswordRateLimit, validatePasswordResetRequest, authController.requestPasswordReset);
+router.post('/reset-password', resetPasswordRateLimit, validatePasswordReset, authController.resetPassword);
 
 // Email verification
 router.get('/verify-email', authController.verifyEmail);

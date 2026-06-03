@@ -11,13 +11,11 @@ const roomParticipantSchema = new Schema<IRoomParticipant>(
     roomId: {
       type: String,
       required: true,
-      index: true,
     },
     userId: {
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: true,
-      index: true,
     },
     joinedAt: {
       type: Date,

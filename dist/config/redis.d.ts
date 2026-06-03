@@ -19,6 +19,7 @@ interface CacheConfig {
     exists: (key: string) => Promise<number>;
     isConnected: () => boolean;
     getClient: () => any | null;
+    createBullMQClient: () => any;
 }
 declare class RedisCache implements CacheConfig {
     private client;
@@ -34,6 +35,7 @@ declare class RedisCache implements CacheConfig {
     exists(key: string): Promise<number>;
     isConnected(): boolean;
     getClient(): any | null;
+    createBullMQClient(): any;
     getJSON<T>(key: string): Promise<T | null>;
     setJSON(key: string, value: any, ttl?: number): Promise<void>;
     getUserCacheKey(userId: string): string;

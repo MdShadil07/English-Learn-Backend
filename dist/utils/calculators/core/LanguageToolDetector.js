@@ -2,6 +2,7 @@ import axios from 'axios';
 import qs from 'qs';
 import { nlpLogger } from './logger.js';
 import { NLP_TIMEOUTS } from './constants.js';
+import { telemetryService } from '../../../services/telemetryService.js';
 const CRITICAL_RULE_PATTERNS = [
     /\bsubject[-_\s]?verb\b/, // subject-verb agreement
     /\bverb[-_\s]?agreement\b/,
@@ -80,6 +81,7 @@ export class LanguageToolDetector {
                 timeout: NLP_TIMEOUTS.LANGUAGETOOL || 5000,
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             });
+            telemetryService.recordServiceCall('languagetool', Date.now() - startTime, false);
             const matches = response.data.matches || [];
             const errors = matches.map(match => this.convertToErrorDetail(match));
             // 🔹 Cache results for 1 hour
@@ -92,6 +94,7 @@ export class LanguageToolDetector {
             return errors;
         }
         catch (error) {
+            telemetryService.recordServiceCall('languagetool', Date.now() - startTime, true);
             // Update circuit breaker state
             this.circuitBreaker.failureCount++;
             this.circuitBreaker.lastFailureTime = Date.now();

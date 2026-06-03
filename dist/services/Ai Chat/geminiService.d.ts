@@ -39,6 +39,7 @@ export interface GenerateResponseRequest {
             fluency?: number;
         };
     };
+    onChunk?: (chunk: string) => void;
 }
 export interface GenerateResponseResponse {
     response: string;

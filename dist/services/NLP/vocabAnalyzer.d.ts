@@ -12,6 +12,7 @@ export declare const CEFR_WORDLISTS: {
     C2: Set<string>;
 };
 export declare const CEFR_COMBINED_WORDSET: Set<string>;
+export declare const ACADEMIC_WORDS: Set<string>;
 interface VocabularyAnalysis {
     level: string;
     score: number;
@@ -30,6 +31,8 @@ interface VocabularyAnalysis {
         unknown: number;
     };
     suggestions: string[];
+    academicWordUsage?: number;
+    rareWordUsage?: number;
 }
 declare class VocabularyAnalyzerService {
     /**

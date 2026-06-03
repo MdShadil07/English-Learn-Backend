@@ -147,6 +147,7 @@ const computeNextMilestone = (score) => {
  * Accuracy Controller
  * Handles message analysis and accuracy calculations
  */
+import User from '../../models/User.js';
 export class AccuracyController {
     /**
      * * 💎 Analyze message with tier-based premium features
@@ -167,12 +168,20 @@ export class AccuracyController {
                     message: 'User message is required',
                 });
             }
-            const tier = normalizeTier(userTier);
-            const proficiency = typeof userLevel === 'string' ? userLevel : undefined;
             let validatedUserId;
             let effectivePreviousAccuracy;
+            let validatedTier = userTier;
             if (isValidObjectId(userId)) {
                 validatedUserId = userId;
+                try {
+                    const userRecord = await User.findById(validatedUserId).select('tier').lean();
+                    if (userRecord && userRecord.tier) {
+                        validatedTier = userRecord.tier;
+                    }
+                }
+                catch (err) {
+                    console.warn('[Accuracy] Could not fetch user tier, using fallback.', err);
+                }
                 if (previousAccuracy && typeof previousAccuracy === 'object') {
                     effectivePreviousAccuracy = previousAccuracy;
                 }
@@ -180,6 +189,8 @@ export class AccuracyController {
             else if (userId) {
                 console.warn('[Accuracy] Received invalid userId; skipping weighted merge.');
             }
+            const tier = normalizeTier(validatedTier);
+            const proficiency = typeof userLevel === 'string' ? userLevel : undefined;
             console.log('[Accuracy] analyzeMessage', {
                 userId: validatedUserId,
                 tier,
@@ -192,6 +203,7 @@ export class AccuracyController {
                 userTier: tier,
                 userLevel: proficiency,
                 previousAccuracy: effectivePreviousAccuracy,
+                persistToDatabase: false,
             });
             const accuracySummary = {
                 current: result.currentAccuracy,

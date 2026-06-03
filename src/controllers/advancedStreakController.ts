@@ -33,7 +33,7 @@ export const getAdvancedStreakStatus = async (
 
     // Get user tier
     const user = await User.findById(userId);
-    const tier = user?.tier || 'free';
+    const tier = (user?.tier as unknown as 'free' | 'pro' | 'premium') || 'free';
 
     const status = await AdvancedStreakService.getStreakStatus(userId, tier);
 
@@ -68,7 +68,7 @@ export const trackStreakActivity = async (
 
     // Get user tier
     const user = await User.findById(userId);
-    const tier = user?.tier || 'free';
+    const tier = (user?.tier as unknown as 'free' | 'pro' | 'premium') || 'free';
 
     const result = await AdvancedStreakService.trackAIChatActivity({
       userId,
@@ -107,7 +107,7 @@ export const useStreakFreeze = async (
 
     // Get user tier
     const user = await User.findById(userId);
-    const tier = user?.tier || 'free';
+    const tier = (user?.tier as unknown as 'free' | 'pro' | 'premium') || 'free';
 
     if (tier !== 'premium') {
       res.status(403).json({ 
@@ -155,7 +155,7 @@ export const initializeUserStreak = async (
 
     // Get user tier
     const user = await User.findById(userId);
-    const tier = user?.tier || 'free';
+    const tier = (user?.tier as unknown as 'free' | 'pro' | 'premium') || 'free';
 
     await AdvancedStreakService.initializeStreak(userId, tier);
 

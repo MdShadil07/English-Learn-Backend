@@ -109,6 +109,10 @@ declare class WebSocketService {
      */
     private handleRoomToggleLock;
     /**
+     * Handle room mode update for centralized room coordinator policy state
+     */
+    private handleRoomModeUpdate;
+    /**
      * Handle hand raise toggle
      */
     private handleRoomHandToggle;

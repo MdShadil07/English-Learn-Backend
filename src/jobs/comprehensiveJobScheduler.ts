@@ -32,6 +32,9 @@ import progressOptimizationService from '../services/Progress/progressOptimizati
 import * as xpCalculator from '../services/Gamification/xpCalculator.js';
 import Progress from '../models/Progress.js';
 import { processAccuracyRequest } from '../services/Accuracy/accuracyProcessingService.js';
+import { optimizedPronunciationTracker } from '../services/Pronunciation/optimizedPronunciationTracker.js';
+import AIChatConversation from '../models/AIChatConversation.js';
+import AIPersonality from '../models/AIPersonality.js';
 
 // ============================================
 // ACCURACY QUEUE - Background Processing
@@ -206,6 +209,21 @@ export class ComprehensiveJobScheduler {
       { timezone: 'UTC' }
     );
 
+    // Every 15 minutes - Flush batched pronunciation updates
+    const pronunciationDataFlush = cron.schedule(
+      '*/15 * * * *',
+      async () => {
+        try {
+          logger.debug('🗣️ Flushing batched pronunciation updates');
+          await optimizedPronunciationTracker.flushAllActiveUsers();
+        } catch (error) {
+          this.stats.errors++;
+          logger.error({ error }, '❌ Pronunciation data flush failed');
+        }
+      },
+      { timezone: 'UTC' }
+    );
+
     // ============================================
     // CACHE & OPTIMIZATION JOBS
     // ============================================
@@ -283,6 +301,7 @@ export class ComprehensiveJobScheduler {
       hourlyAccuracyTrends,
       dailyWeeklyAnalytics,
       batchedProgressFlush,
+      pronunciationDataFlush,
       cacheCleanup,
       leaderboardUpdate,
       databaseOptimization,
@@ -300,6 +319,7 @@ export class ComprehensiveJobScheduler {
         'Hourly accuracy trends',
         'Daily weekly analytics (2 AM UTC)',
         'Batched progress flush (every 30 min)',
+        'Pronunciation data flush (every 15 min)',
         'Cache cleanup (every 15 min)',
         'Leaderboard update (hourly)',
         'Database optimization (3 AM UTC)',
@@ -358,11 +378,25 @@ export class ComprehensiveJobScheduler {
     const { userId, userMessage, aiResponse, userTier, userLevel, previousAccuracy } = job.data;
 
     try {
-      logger.debug(`🔄 [Job ${job.id}] Processing accuracy for user ${userId.substring(0, 8)}`);
-      console.log('🔍 ========== BACKGROUND ACCURACY JOB START ==========');
-      console.log(`📝 User Message: "${userMessage}"`);
+      let aiPersonalityName: string | undefined = undefined;
+      try {
+        const activeConv = await AIChatConversation.findOne({ userId, status: 'active' }).sort({ lastMessageAt: -1 }).select('personalityId').lean();
+        if (activeConv?.personalityId) {
+          const personality = await AIPersonality.findOne({ name: activeConv.personalityId }).select('personalityType').lean();
+          if (personality?.personalityType) {
+            aiPersonalityName = personality.personalityType;
+          }
+        }
+      } catch (err) {
+        logger.warn(`Failed to fetch AI personality for tone analysis: ${err}`);
+      }
+
+      logger.debug(`🛠️ [Job ${job.id}] Processing accuracy for user ${userId.substring(0, 8)}`);
+      console.log('🔄 ========== BACKGROUND ACCURACY JOB START ==========');
+      console.log(`👤 User Message: "${userMessage}"`);
       console.log(`🤖 AI Response: "${aiResponse.substring(0, 100)}..."`);
-      console.log(`👤 User Tier: ${userTier}`);
+      console.log(`🎯 User Tier: ${userTier}`);
+      if (aiPersonalityName) console.log(`🎭 AI Personality: ${aiPersonalityName}`);
 
       const processingResult = await processAccuracyRequest({
         userId,
@@ -371,6 +405,7 @@ export class ComprehensiveJobScheduler {
         userTier,
         userLevel,
         previousAccuracy,
+        aiPersonality: aiPersonalityName
       });
 
       const analysis = processingResult.analysis;

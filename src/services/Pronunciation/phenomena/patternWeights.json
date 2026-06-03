@@ -1,0 +1,15 @@
+{
+  "schwa_insertion": 1,
+  "cluster_simplification": 1,
+  "aspiration_mismatch": 1,
+  "final_consonant_drop": 1,
+  "dentalization": 1,
+  "vowel_neutralization": 1,
+  "stress_shift": 1,
+  "syllable_clipping": 1,
+  "epenthetic_vowel": 1,
+  "devoicing": 1,
+  "glottal_stop_substitution": 1,
+  "vowel_insertion": 1,
+  "aspiration_variation": 1
+}

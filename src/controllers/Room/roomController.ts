@@ -23,7 +23,7 @@ export class RoomController {
 
       const { 
         topic, description, maxParticipants, isPrivate, banner,
-        bannerText, bannerFontFamily, bannerIsBold, bannerIsItalic, bannerFontSize 
+        bannerText, bannerFontFamily, bannerIsBold, bannerIsItalic, bannerFontSize, mode
       } = req.body;
 
       if (!topic || typeof topic !== 'string' || topic.trim().length === 0) {
@@ -45,6 +45,7 @@ export class RoomController {
         bannerFontSize,
         maxParticipants,
         isPrivate: isPrivate || false,
+        mode,
       });
 
       const sfuUrl = process.env.SFU_URL || 'http://localhost:3001';

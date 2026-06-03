@@ -5,4 +5,5 @@
 // Export room service
 export * from './roomService.js';
 export * from './distributedRoomStateService.js';
+export * from './roomCoordinatorService.js';
 //# sourceMappingURL=index.js.map

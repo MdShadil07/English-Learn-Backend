@@ -6,7 +6,7 @@ import { webSocketService } from '../../services/WebSocket/socketService.js';
 import subscriptionService from '../../services/Subscription/subscriptionService.js';
 import { Types } from 'mongoose';
 
-const USER_RESPONSE_FIELDS = 'email firstName lastName username role tier subscriptionStatus subscriptionPlan subscriptionStartDate subscriptionEndDate createdAt updatedAt googleAuth';
+const USER_RESPONSE_FIELDS = 'email firstName lastName username role tier subscriptionStatus subscriptionPlan subscriptionStartDate subscriptionEndDate createdAt updatedAt googleAuth isVerified verificationStatus';
 
 const sanitizeValue = (value: unknown): unknown => {
   if (value === null || value === undefined) {
@@ -377,6 +377,8 @@ export class ProfileController {
             lastName: user.lastName,
             username: user.username,
             role: user.role,
+            isVerified: user.isVerified,
+            verificationStatus: user.verificationStatus,
             createdAt: user.createdAt,
             updatedAt: user.updatedAt,
             fullName: user.getFullName(),

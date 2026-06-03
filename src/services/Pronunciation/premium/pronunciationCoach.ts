@@ -1,0 +1,1 @@
+export { analyzeCommunicationPremium } from '../communicationCoach.js';

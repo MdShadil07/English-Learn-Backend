@@ -4,7 +4,12 @@ export declare class SFUService {
     private nextWorkerIndex;
     private rooms;
     private workersReady;
+    private isOverloaded;
+    private monitorInterval;
     constructor();
+    private startResourceMonitor;
+    private enableGracefulDegradation;
+    private disableGracefulDegradation;
     private initializeWorkers;
     private getNextWorker;
     getOrCreateRouter(roomId: string): Promise<Router>;
@@ -20,6 +25,8 @@ export declare class SFUService {
         kind: string;
     }[];
     shutdown(): Promise<void>;
+    restartIce(roomId: string, transportId: string): Promise<any>;
+    recreateConsumer(roomId: string, transportId: string, producerId: string, rtpCapabilities: RtpCapabilities): Promise<any>;
 }
 export declare const sfuService: SFUService;
 export default sfuService;

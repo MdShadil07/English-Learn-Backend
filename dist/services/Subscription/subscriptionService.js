@@ -121,7 +121,7 @@ export class SubscriptionService {
                     revokedUsers.push({
                         userId: subscription.userId,
                         previousTier: subscription.tier,
-                        expiryDate: subscription.endAt,
+                        expiryDate: subscription.expiresAt,
                     });
                 }
             }
@@ -145,7 +145,7 @@ export class SubscriptionService {
             if (!subscription)
                 return 'free';
             // If subscription has an end date and it's in the past, treat as free
-            if (subscription.endAt && new Date() > subscription.endAt)
+            if (subscription.expiresAt && new Date() > subscription.expiresAt)
                 return 'free';
             return subscription.tier || 'free';
         }
@@ -176,11 +176,11 @@ export class SubscriptionService {
                 activeTier,
                 planType: subscription.planType,
                 startAt: subscription.startAt,
-                endAt: subscription.endAt,
-                daysRemaining: subscription.endAt
-                    ? Math.ceil((subscription.endAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+                expiresAt: subscription.expiresAt,
+                daysRemaining: subscription.expiresAt
+                    ? Math.ceil((subscription.expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
                     : null,
-                isExpired: subscription.endAt && new Date() > subscription.endAt,
+                isExpired: subscription.expiresAt && new Date() > subscription.expiresAt,
             };
         }
         catch (error) {
