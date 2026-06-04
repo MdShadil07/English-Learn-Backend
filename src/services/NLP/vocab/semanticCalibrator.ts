@@ -39,13 +39,8 @@ if (VOCAB_EMBEDDINGS_PATH && !existsSync(VOCAB_EMBEDDINGS_PATH)) {
   logger.warn({ path: VOCAB_EMBEDDINGS_PATH }, 'No embedding model found – skipping semantic vocabulary scoring');
 }
 
-const ENABLED = (() => {
-  const base = readBooleanFlag('ENABLE_VOCAB_EMBEDDINGS', true);
-  if (VOCAB_EMBEDDINGS_PATH && !existsSync(VOCAB_EMBEDDINGS_PATH)) {
-    return false;
-  }
-  return base;
-})();
+const ENABLED = false; // Hardcoded to false to prevent 512MB OOM crash on Render
+
 
 type EmbeddingVector = number[];
 type FeatureExtractor = (input: string) => Promise<unknown>;

@@ -33,13 +33,8 @@ export interface SemanticRelevanceResult {
 }
 
 const EMBEDDING_MODEL_ID = process.env.PRONUNCIATION_SEMANTIC_MODEL_ID?.trim() || 'Xenova/all-MiniLM-L6-v2';
-const ENABLED = (() => {
-  const raw = process.env.ENABLE_PRONUNCIATION_SEMANTIC_GATE;
-  if (!raw || raw.trim().length === 0) {
-    return true;
-  }
-  return ['1', 'true', 'yes', 'on', 'enabled'].includes(raw.trim().toLowerCase());
-})();
+const ENABLED = false; // Hardcoded to false to prevent 512MB OOM crash on Render
+
 const SEMANTIC_EMBEDDINGS_PATH = (process.env.PRONUNCIATION_SEMANTIC_EMBEDDINGS_PATH || '').trim();
 
 if (SEMANTIC_EMBEDDINGS_PATH && !existsSync(SEMANTIC_EMBEDDINGS_PATH)) {
