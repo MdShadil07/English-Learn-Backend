@@ -35,7 +35,7 @@ export class RTCBot {
       this.connected = false;
     });
 
-    this.socket.on('newProducer', (data) => {
+    this.socket.on('newProducer', (data: any) => {
       // Simulate subscribing to a new producer
       this.socket.emit('consume', { producerId: data.producerId });
     });
@@ -55,7 +55,7 @@ export class RTCBot {
           this.socket.once('room:joined', () => {
             resolve();
           });
-          this.socket.once('room:error', (error) => {
+          this.socket.once('room:error', (error: any) => {
             reject(new Error(error?.error || error?.message || 'Room Error'));
           });
           this.socket.emit('room:join', { roomId: this.roomId });
@@ -71,8 +71,8 @@ export class RTCBot {
         checkBoth();
       });
 
-      this.socket.once('connect_error', (err) => reject(new Error(`Main Connect Error: ${err.message}`)));
-      this.sfuSocket.once('connect_error', (err) => reject(new Error(`SFU Connect Error: ${err.message}`)));
+      this.socket.once('connect_error', (err: any) => reject(new Error(`Main Connect Error: ${err.message}`)));
+      this.sfuSocket.once('connect_error', (err: any) => reject(new Error(`SFU Connect Error: ${err.message}`)));
 
       // Increased to 30 seconds to handle cloud Redis latency when 500 bots join simultaneously
       setTimeout(() => reject(new Error('Timeout connecting')), 30000);
