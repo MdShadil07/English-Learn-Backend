@@ -1,5 +1,7 @@
 import { roomService } from '../../services/Room/roomService.js';
 import { roomBannerUploadService } from '../../services/Room/roomBannerUploadService.js';
+/** SFU server URL — set SFU_URL in your env, never rely on localhost in production */
+const SFU_URL = process.env.SFU_URL || 'http://localhost:3001';
 export class RoomController {
     /**
      * Create a new practice room
@@ -34,7 +36,7 @@ export class RoomController {
                 isPrivate: isPrivate || false,
                 mode,
             });
-            const sfuUrl = process.env.SFU_URL || 'http://localhost:3001';
+            const sfuUrl = SFU_URL;
             return res.status(201).json({
                 success: true,
                 message: 'Room created successfully',
@@ -97,7 +99,7 @@ export class RoomController {
             const { roomId } = req.params;
             const { roomCode } = req.body; // Optional: required for private rooms
             const room = await roomService.joinRoom(roomId, req.user._id, roomCode);
-            const sfuUrl = process.env.SFU_URL || 'http://localhost:3001';
+            const sfuUrl = SFU_URL;
             return res.json({
                 success: true,
                 message: 'Joined room successfully',
@@ -157,7 +159,7 @@ export class RoomController {
     async getActiveRooms(req, res) {
         try {
             const rooms = await roomService.getActiveRooms();
-            const sfuUrl = process.env.SFU_URL || 'http://localhost:3001';
+            const sfuUrl = SFU_URL;
             return res.json({
                 success: true,
                 data: rooms.map(room => ({ ...room, sfuUrl })),
@@ -191,7 +193,7 @@ export class RoomController {
                     message: 'Room not found',
                 });
             }
-            const sfuUrl = process.env.SFU_URL || 'http://localhost:3001';
+            const sfuUrl = SFU_URL;
             return res.json({
                 success: true,
                 data: { ...room, sfuUrl },

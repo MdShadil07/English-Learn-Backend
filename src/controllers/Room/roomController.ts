@@ -2,6 +2,9 @@ import { Request, Response } from 'express';
 import { roomService } from '../../services/Room/roomService.js';
 import { roomBannerUploadService } from '../../services/Room/roomBannerUploadService.js';
 
+/** SFU server URL — set SFU_URL in your env, never rely on localhost in production */
+const SFU_URL = process.env.SFU_URL || 'http://localhost:3001';
+
 interface AuthRequest extends Request {
   user?: any;
   file?: Express.Multer.File;
@@ -48,7 +51,7 @@ export class RoomController {
         mode,
       });
 
-      const sfuUrl = process.env.SFU_URL || 'http://localhost:3001';
+      const sfuUrl = SFU_URL;
 
       return res.status(201).json({
         success: true,
@@ -118,7 +121,7 @@ export class RoomController {
 
       const room = await roomService.joinRoom(roomId, req.user._id, roomCode);
 
-      const sfuUrl = process.env.SFU_URL || 'http://localhost:3001';
+      const sfuUrl = SFU_URL;
 
       return res.json({
         success: true,
@@ -188,7 +191,7 @@ export class RoomController {
     try {
       const rooms = await roomService.getActiveRooms();
 
-      const sfuUrl = process.env.SFU_URL || 'http://localhost:3001';
+      const sfuUrl = SFU_URL;
       
       return res.json({
         success: true,
@@ -226,7 +229,7 @@ export class RoomController {
         });
       }
 
-      const sfuUrl = process.env.SFU_URL || 'http://localhost:3001';
+      const sfuUrl = SFU_URL;
 
       return res.json({
         success: true,

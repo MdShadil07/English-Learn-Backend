@@ -9,8 +9,8 @@ export const corsOptions = {
         // Allow requests with no origin (mobile apps, curl, server-to-server)
         if (!origin)
             return callback(null, true);
-        // Base always-allowed dev origins
-        const baseOrigins = [
+        // Base always-allowed dev origins (only included outside of production)
+        const baseOrigins = process.env.NODE_ENV !== 'production' ? [
             'http://localhost:3000',
             'http://localhost:3001',
             'http://localhost:8080',
@@ -22,7 +22,7 @@ export const corsOptions = {
             'http://127.0.0.1:8081',
             'http://127.0.0.1:5173',
             'http://127.0.0.1:64493',
-        ];
+        ] : [];
         // Dynamically extend from env — supports multiple comma-separated URLs
         // e.g. ALLOWED_ORIGINS=https://cognitospeak.vercel.app,https://www.cognitospeak.com
         const envOrigins = [

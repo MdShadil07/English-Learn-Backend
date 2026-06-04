@@ -19,12 +19,8 @@ const swaggerDefinition = {
   },
   servers: [
     {
-      url: 'http://localhost:5000/api',
-      description: 'Development server'
-    },
-    {
-      url: 'https://api.englishpractice.com',
-      description: 'Production server'
+      url: process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 5000}/api`,
+      description: process.env.NODE_ENV === 'production' ? 'Production server' : 'Development server'
     }
   ],
   components: {

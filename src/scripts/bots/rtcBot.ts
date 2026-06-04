@@ -7,7 +7,13 @@ export class RTCBot {
   private roomId: string;
   private connected = false;
 
-  constructor(userId: string, roomId: string, token: string, serverUrl = 'http://localhost:5000', sfuUrl = 'http://localhost:3001') {
+  constructor(
+    userId: string,
+    roomId: string,
+    token: string,
+    serverUrl = process.env.SERVER_URL || 'http://localhost:5000',
+    sfuUrl   = process.env.SFU_URL    || 'http://localhost:3001',
+  ) {
     this.userId = userId;
     this.roomId = roomId;
     this.socket = io(serverUrl, {
