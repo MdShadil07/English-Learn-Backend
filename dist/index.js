@@ -47,10 +47,10 @@ import subscriptionService from './services/Subscription/subscriptionService.js'
 import { createAIChatConversationPersistenceWorker, shutdownAIChatConversationPersistenceWorker, } from './workers/aiChatConversationPersistenceWorker.js';
 import { shutdownAIChatConversationQueue } from './queues/aiChatConversationQueue.js';
 import { createSpeechAnalysisWorker, shutdownSpeechAnalysisWorker } from './workers/speechAnalysisWorker.js';
+import { shutdownSpeechAnalysisQueue } from './queues/speechAnalysisQueue.js';
 // Import WebSocket service
 import { webSocketService } from './services/WebSocket/socketService.js';
-// Import email queue service
-import { createEmailWorker, shutdownEmailQueue } from './services/Email/emailQueueService.js';
+import { createEmailWorker, shutdownEmailQueue, shutdownEmailWorker } from './services/Email/emailQueueService.js';
 // Connect to database and cache
 async function initializeServices() {
     try {
@@ -119,6 +119,7 @@ async function startServer() {
         // Connect to database and cache
         await initializeServices();
         const app = express();
+        app.set('trust proxy', 1); // Trust first proxy (Render) for rate limiting
         const server = createServer(app);
         const PORT = process.env.PORT || 5000;
         // Security middleware
@@ -215,10 +216,12 @@ async function startServer() {
                         shutdownAIChatConversationPersistenceWorker(),
                         shutdownAIChatConversationQueue(),
                         shutdownSpeechAnalysisWorker(),
+                        shutdownSpeechAnalysisQueue(),
                         webSocketService.shutdown(),
                         database.disconnect(),
                         redisCache.disconnect(),
-                        shutdownEmailQueue()
+                        shutdownEmailQueue(),
+                        shutdownEmailWorker()
                     ]);
                     console.log('✅ Database, cache, and email queue disconnected');
                 }
@@ -237,6 +240,7 @@ async function startServer() {
         // Handle shutdown signals
         process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
         process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+        process.on('SIGUSR2', () => gracefulShutdown('SIGUSR2')); // For nodemon / tsx watch restarts
         // Handle uncaught exceptions
         process.on('uncaughtException', (error) => {
             console.error('❌ Uncaught Exception:', error);

@@ -1491,15 +1491,18 @@ export class UnifiedAccuracyCalculator {
                             current: enhancedResult.weights.current,
                         },
                     };
-                    if (historicalWeighting?.decayFactor !== undefined && basicResult.performance) {
-                        basicResult.performance.decayFactorApplied = Number(historicalWeighting.decayFactor.toFixed(2));
-                    }
-                    if (historicalWeighting?.categoryBaselines && basicResult.performance) {
-                        const baselines = historicalWeighting.categoryBaselines;
-                        const baselineKeys = Object.keys(baselines)
-                            .filter((key) => NUMERIC_ACCURACY_KEYS.includes(key));
-                        if (baselineKeys.length > 0) {
-                            basicResult.performance.baselinesApplied = baselineKeys;
+                    const hw = historicalWeighting;
+                    const perf = basicResult.performance;
+                    if (hw && perf) {
+                        if (hw.decayFactor !== undefined) {
+                            perf.decayFactorApplied = Number(hw.decayFactor.toFixed(2));
+                        }
+                        if (hw.categoryBaselines) {
+                            const baselineKeys = Object.keys(hw.categoryBaselines)
+                                .filter((key) => NUMERIC_ACCURACY_KEYS.includes(key));
+                            if (baselineKeys.length > 0) {
+                                perf.baselinesApplied = baselineKeys;
+                            }
                         }
                     }
                     debugConsoleLog('✅ Enhanced weighted calculation applied successfully');
@@ -1508,7 +1511,7 @@ export class UnifiedAccuracyCalculator {
                 }
                 catch (error) {
                     debugConsoleWarn('⚠️ FALLBACK TRIGGERED: Enhanced weighted calculation failed in basic analysis path');
-                    debugConsoleWarn('  Reason:', error instanceof Error ? error.message : String(error));
+                    debugConsoleWarn('  Reason:', error.message || String(error));
                     debugConsoleWarn('  User ID:', userId);
                     debugConsoleWarn('  Fallback Strategy: Using unweighted basic accuracy results');
                     debugConsoleWarn('  Impact: Historical context not applied, may show more variability');
@@ -1801,7 +1804,7 @@ export class UnifiedAccuracyCalculator {
             }
             catch (error) {
                 debugConsoleWarn('⚠️ FALLBACK TRIGGERED: Enhanced weighted accuracy calculation failed in NLP path');
-                debugConsoleWarn('  Reason:', error instanceof Error ? error.message : String(error));
+                debugConsoleWarn('  Reason:', error.message || String(error));
                 debugConsoleWarn('  User ID:', userId);
                 debugConsoleWarn('  Fallback Strategy: Using current message accuracy without historical weighting');
                 debugConsoleWarn('  Impact: Results may show more variability, historical smoothing not applied');

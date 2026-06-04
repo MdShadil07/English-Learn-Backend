@@ -1,86 +1,10 @@
-import nodemailer from 'nodemailer';
-import { resolve4 } from 'dns/promises';
-// Create nodemailer transporter with production-ready configuration
-const createTransporter = async () => {
-    // Check if SMTP configuration is available
-    const smtpHost = process.env.SMTP_HOST;
-    const smtpPort = process.env.SMTP_PORT;
-    const smtpUser = process.env.SMTP_USER;
-    const smtpPass = process.env.SMTP_PASS;
-    if (smtpHost && smtpPort && smtpUser && smtpPass) {
-        // Use configured SMTP server with production settings
-        // Force IPv4 by resolving hostname to IPv4 address
-        const transportConfig = {
-            host: smtpHost,
-            port: parseInt(smtpPort),
-            secure: parseInt(smtpPort) === 465, // true for 465, false for other ports
-            auth: {
-                user: smtpUser,
-                pass: smtpPass,
-            },
-            // Production-ready settings
-            pool: true, // Use connection pooling for better performance
-            maxConnections: 10, // Max 10 concurrent connections
-            maxMessages: 100, // Send max 100 messages per connection
-            rateDelta: 1000, // Rate limit window
-            rateLimit: 10, // Max 10 messages per second
-            connectionTimeout: 10000, // 10s timeout for connecting to SMTP server
-            greetingTimeout: 10000, // 10s timeout for SMTP greeting
-            socketTimeout: 10000, // 10s timeout for socket idle
-            tls: {
-                rejectUnauthorized: process.env.NODE_ENV === 'production', // Only verify in production
-            },
-        };
-        // Try to resolve hostname to IPv4 to avoid IPv6 issues
-        try {
-            const addresses = await resolve4(smtpHost);
-            if (addresses && addresses.length > 0) {
-                transportConfig.host = addresses[0]; // Use first IPv4 address
-                console.log(`📧 Resolved ${smtpHost} to IPv4: ${addresses[0]}`);
-            }
-        }
-        catch (error) {
-            console.warn(`⚠️ Could not resolve ${smtpHost} to IPv4, using hostname directly`);
-        }
-        return nodemailer.createTransport(transportConfig);
-    }
-    else {
-        // Fallback to a real Nodemailer test account (Ethereal) for reliable local testing.
-        // This ensures valid credentials and that `nodemailer.getTestMessageUrl(info)` returns a preview URL.
-        try {
-            console.log('⚠️  SMTP not configured, creating Nodemailer test account for local email previews');
-            const testAccount = await nodemailer.createTestAccount();
-            return nodemailer.createTransport({
-                host: 'smtp.ethereal.email',
-                port: 587,
-                secure: false,
-                auth: {
-                    user: testAccount.user,
-                    pass: testAccount.pass,
-                },
-            });
-        }
-        catch (err) {
-            console.warn('⚠️ Failed to create Nodemailer test account, falling back to default ethereal config', err);
-            return nodemailer.createTransport({
-                host: 'smtp.ethereal.email',
-                port: 587,
-                auth: {
-                    user: process.env.ETHEREAL_USER || 'test@ethereal.email',
-                    pass: process.env.ETHEREAL_PASS || 'testpass',
-                },
-            });
-        }
-    }
-};
-let transporter = null;
+import { Resend } from 'resend';
+// Initialize Resend with the API key from environment variables
+// It will fall back to a dummy key if not present (which will fail gracefully when sending)
+const resend = new Resend(process.env.RESEND_API_KEY || 're_dummy_key');
 // Email service for development and production
 export async function sendEmail(options) {
     try {
-        // Initialize transporter if not already done (now async)
-        if (!transporter) {
-            transporter = await createTransporter();
-        }
         // Normalize template data and generate HTML content
         const templateData = options.data || {};
         let htmlContent = options.html;
@@ -106,7 +30,6 @@ export async function sendEmail(options) {
         catch (e) {
             // ignore
         }
-        // Always send actual email in development (user requested)
         console.log('\n');
         console.log('╔══════════════════════════════════════════════════════════════════════════════╗');
         console.log('║                          EMAIL SERVICE - SENDING EMAIL                      ║');
@@ -130,27 +53,23 @@ export async function sendEmail(options) {
             console.log('\n📚 Welcome to English Learning Platform!');
             console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
         }
-        // Send actual email
-        const mailOptions = {
-            from: process.env.EMAIL_FROM || 'English Learning Platform <noreply@englishlearning.com>',
-            to: options.to,
+        // Send actual email using Resend
+        // By default Resend provides onboarding@resend.dev which only works if sending to your own email address.
+        // Make sure EMAIL_FROM is verified in your Resend dashboard for production.
+        const fromEmail = process.env.EMAIL_FROM || 'onboarding@resend.dev';
+        const { data, error } = await resend.emails.send({
+            from: fromEmail,
+            to: [options.to],
             subject: options.subject,
-            html: htmlContent,
-            text: options.text,
-        };
-        const info = await transporter.sendMail(mailOptions);
-        console.log('✅ Email sent successfully!');
-        console.log(`� Message ID: ${info.messageId}`);
-        // If Nodemailer provides a preview URL (Ethereal/test account), always log it for debugging.
-        try {
-            const preview = nodemailer.getTestMessageUrl(info);
-            if (preview) {
-                console.log(`� Preview URL: ${preview}`);
-            }
+            html: htmlContent || '',
+            text: options.text || '',
+        });
+        if (error) {
+            console.error('❌ Resend API Error:', error);
+            throw new Error(error.message);
         }
-        catch (e) {
-            // ignore
-        }
+        console.log('✅ Email sent successfully via Resend!');
+        console.log(`🆔 Message ID: ${data?.id}`);
         console.log('╔══════════════════════════════════════════════════════════════════════════════╗');
         console.log('║                            END EMAIL SERVICE                                 ║');
         console.log('╚══════════════════════════════════════════════════════════════════════════════╝\n');

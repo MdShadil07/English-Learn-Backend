@@ -72,6 +72,9 @@ class WebSocketService {
     async setupRedisAdapter() {
         if (!this.io)
             return;
+        if (this.redisAdapterClients) {
+            await closeSocketRedisClients(this.redisAdapterClients);
+        }
         this.redisAdapterClients = await createSocketRedisClients();
         if (!this.redisAdapterClients) {
             logSocketInfo('socket redis adapter disabled, continuing in single-node mode');

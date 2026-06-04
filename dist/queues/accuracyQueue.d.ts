@@ -36,5 +36,6 @@ export declare function getQueueStats(): Promise<{
     completed: number;
     failed: number;
 }>;
+export declare function shutdownAccuracyWorker(): Promise<void>;
 export { accuracyWorker };
 //# sourceMappingURL=accuracyQueue.d.ts.map

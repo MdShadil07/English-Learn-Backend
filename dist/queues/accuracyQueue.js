@@ -12,17 +12,17 @@
  * - Graceful failure handling
  */
 import { Queue, Worker } from 'bullmq';
+import Progress from '../models/Progress.js';
 import Redis from 'ioredis';
 import { UnifiedAccuracyCalculator } from '../utils/calculators/unifiedAccuracyCalculators.js';
 import progressOptimizationService from '../services/Progress/progressOptimizationService.js';
 import * as xpCalculator from '../services/Gamification/xpCalculator.js';
-import Progress from '../models/Progress.js';
+import { sharedBullmqConnection } from '../config/sharedBullmqConnection.js';
 // ============================================
-// REDIS CONNECTION (SHARED)
+// REDIS CONNECTION (WORKER)
 // ============================================
-const redisConnection = new Redis({
-    host: process.env.REDIS_HOST || 'localhost',
-    port: parseInt(process.env.REDIS_PORT || '6379'),
+const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+const accuracyWorkerConnection = new Redis(redisUrl, {
     maxRetriesPerRequest: null, // Required for BullMQ
     retryStrategy: (times) => Math.min(times * 50, 2000),
 });
@@ -30,7 +30,7 @@ const redisConnection = new Redis({
 // QUEUE CONFIGURATION
 // ============================================
 export const accuracyQueue = new Queue('accuracy-analysis', {
-    connection: redisConnection,
+    connection: sharedBullmqConnection,
     defaultJobOptions: {
         attempts: 3, // Retry up to 3 times
         backoff: {
@@ -124,11 +124,11 @@ const accuracyWorker = new Worker('accuracy-analysis', async (job) => {
         throw error; // Will trigger retry
     }
 }, {
-    connection: redisConnection,
-    concurrency: 50, // Process 50 jobs in parallel for scalability
+    connection: accuracyWorkerConnection,
+    concurrency: 5, // Process up to 5 jobs concurrently
     limiter: {
-        max: 500, // Max 500 jobs per interval
-        duration: 1000, // Per 1 second (500 jobs/second)
+        max: 100, // Maximum 100 jobs
+        duration: 1000, // per 1 second
     },
 });
 // ============================================
@@ -173,10 +173,13 @@ export async function getQueueStats() {
 // ============================================
 // GRACEFUL SHUTDOWN
 // ============================================
-process.on('SIGTERM', async () => {
-    console.log('🛑 SIGTERM received - closing accuracy worker...');
+export async function shutdownAccuracyWorker() {
+    console.log('🛑 Closing accuracy worker...');
     await accuracyWorker.close();
-    await redisConnection.quit();
+    await accuracyWorkerConnection.quit();
+}
+process.on('SIGTERM', async () => {
+    await shutdownAccuracyWorker();
     process.exit(0);
 });
 export { accuracyWorker };

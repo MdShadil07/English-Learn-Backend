@@ -67,7 +67,11 @@ class TelemetryService {
 
     try {
       if (metrics.length > 0) {
-        const adminUrl = process.env.ADMIN_BACKEND_URL || 'http://localhost:5200';
+        const adminUrl = process.env.ADMIN_BACKEND_URL;
+        if (!adminUrl) {
+          // Admin backend not configured, skip flushing
+          return;
+        }
         const secret = process.env.ADMIN_INTERNAL_SECRET || 'internal-secret';
         
         await fetch(`${adminUrl}/api/admin/metrics/ingest`, {
