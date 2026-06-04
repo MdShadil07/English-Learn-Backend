@@ -138,17 +138,17 @@ contentBlockSchema.add({
 const lessonSchema = new Schema<ILesson>(
   {
     courseId: {
-  type: Schema.Types.ObjectId,
-  ref: 'Course',
-  required: true,
-  index: true,
-},
+      type: Schema.Types.ObjectId,
+      ref: 'Course',
+      required: true,
+      index: true,
+    },
     moduleId: {
-  type: Schema.Types.ObjectId,
-  ref: 'CourseModule',
-  required: true,
-  index: true,
-},
+      type: Schema.Types.ObjectId,
+      ref: 'CourseModule',
+      required: true,
+      index: true,
+    },
     title: {
       type: String,
       required: true,

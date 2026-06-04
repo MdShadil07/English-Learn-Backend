@@ -18,17 +18,11 @@ interface EmailJobData {
 // Email queue configuration
 const EMAIL_QUEUE_NAME = 'email-queue';
 
-// Create dedicated Redis connection for BullMQ with proper settings
-const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-const bullmqRedis = new (Redis as any)(redisUrl, {
-  maxRetriesPerRequest: null, // Required for BullMQ
-  enableReadyCheck: true,
-  lazyConnect: true,
-});
+import { sharedBullmqConnection } from '../../config/sharedBullmqConnection.js';
 
 // Create email queue
 export const emailQueue = new Queue<EmailJobData>(EMAIL_QUEUE_NAME, {
-  connection: bullmqRedis,
+  connection: sharedBullmqConnection,
   defaultJobOptions: {
     attempts: 5,
     backoff: {
@@ -171,13 +165,26 @@ export async function getEmailQueueStats() {
  * Email queue worker - processes emails in background
  * Only creates worker if Redis is available
  */
+let activeWorker: Worker | null = null;
+let activeWorkerRedis: any | null = null;
+
 export async function createEmailWorker() {
   if (!isRedisAvailable()) {
     console.log('⚠️ Redis not available, email worker not started. Emails will be sent synchronously.');
     return null;
   }
 
-  const worker = new Worker<EmailJobData>(
+  const workerRedisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+  activeWorkerRedis = new (Redis as any)(workerRedisUrl, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: true,
+  });
+
+  activeWorkerRedis.on('error', (error: any) => {
+    console.error('Email Worker Redis connection error:', error?.message || error);
+  });
+
+  activeWorker = new Worker<EmailJobData>(
     EMAIL_QUEUE_NAME,
     async (job: Job<EmailJobData>) => {
       const { to, subject, template, data, html, text } = job.data;
@@ -201,34 +208,46 @@ export async function createEmailWorker() {
       }
     },
     {
-      connection: bullmqRedis,
-      concurrency: 10, // Process 10 emails concurrently
+      connection: activeWorkerRedis,
+      concurrency: 50, // Process 50 emails concurrently for high throughput
       limiter: {
-        max: 100, // Max 100 emails per minute
-        duration: 60000, // 1 minute
+        max: 5000, // Max 5000 emails per second
+        duration: 1000, // 1 second
       },
     }
   );
 
-  worker.on('completed', (job) => {
+  activeWorker.on('completed', (job) => {
     console.log(`✅ Email job completed: ${job.id}`);
   });
 
-  worker.on('failed', (job, error) => {
+  activeWorker.on('failed', (job, error) => {
     console.error(`❌ Email job failed: ${job?.id} - ${error.message}`);
   });
 
-  worker.on('error', (error) => {
+  activeWorker.on('error', (error) => {
     console.error('Email worker error:', error);
   });
 
   console.log('🚀 Email queue worker started');
-  return worker;
+  return activeWorker;
 }
 
 /**
  * Graceful shutdown
  */
+export async function shutdownEmailWorker() {
+  if (activeWorker) {
+    await activeWorker.close();
+    activeWorker = null;
+    console.log('Email worker shut down');
+  }
+  if (activeWorkerRedis) {
+    await activeWorkerRedis.quit();
+    activeWorkerRedis = null;
+  }
+}
+
 export async function shutdownEmailQueue() {
   if (emailQueue) {
     await emailQueue.close();
@@ -242,4 +261,5 @@ export default {
   getEmailQueueStats,
   createEmailWorker,
   shutdownEmailQueue,
+  shutdownEmailWorker,
 };

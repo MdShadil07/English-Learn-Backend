@@ -1,3 +1,5 @@
+import numberToWords from 'number-to-words';
+
 export interface WordAlignmentPair {
   targetWord: string | null;
   actualWord: string | null;
@@ -47,8 +49,19 @@ export const stemAlignmentWord = (word: string) => {
   return normalized;
 };
 
-export const tokenizeForAlignment = (text: string) =>
-  text
+export const normalizeNumbersInText = (text: string) => {
+  return text.replace(/\b\d+\b/g, (match) => {
+    try {
+      return numberToWords.toWords(parseInt(match, 10)).replace(/-/g, ' ');
+    } catch {
+      return match;
+    }
+  });
+};
+
+export const tokenizeForAlignment = (text: string) => {
+  const textWithWords = normalizeNumbersInText(text);
+  return textWithWords
     .split(/\s+/)
     .map((word) => word.trim())
     .filter(Boolean)
@@ -56,6 +69,7 @@ export const tokenizeForAlignment = (text: string) =>
       const normalized = normalizeAlignmentWord(word);
       return normalized && !FILLER_WORDS.has(normalized);
     });
+};
 
 export function alignWordSequences(targetWords: string[], actualWords: string[]): WordAlignmentPair[] {
   const targets = targetWords.map((word, index) => ({

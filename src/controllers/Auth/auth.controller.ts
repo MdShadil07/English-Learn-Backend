@@ -98,7 +98,7 @@ export class AuthController {
       // Only send if welcome email hasn't been sent yet
       if (!user.welcomeEmailSent) {
         try {
-          await queueEmail({
+          queueEmail({
             to: user.email,
             subject: 'Welcome to CognitoSpeak! 🎉',
             template: 'welcome',
@@ -107,14 +107,14 @@ export class AuthController {
               appUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
             },
             priority: 'high'
-          });
+          }).catch(emailError => console.error('❌ Failed to queue welcome email:', emailError));
           console.log('✅ Welcome email queued for:', user.email);
           
           // Mark welcome email as sent
           user.welcomeEmailSent = true;
           await user.save();
         } catch (emailError) {
-          console.error('❌ Failed to queue welcome email:', emailError);
+          console.error('❌ Synchronous error in welcome email logic:', emailError);
           // Don't fail the registration if email fails
         }
       }
@@ -660,30 +660,19 @@ export class AuthController {
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
       const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
 
-      try {
-        await queueEmail({
-          to: user.email,
-          subject: 'Password Reset Request',
-          template: 'password-reset', // Assuming there's a password-reset template, otherwise fallback to plain text body if generic template exists
-          data: {
-            userName: user.fullName || user.firstName,
-            resetUrl: resetUrl,
-            appUrl: frontendUrl,
-          },
-          priority: 'high'
-        });
-      } catch (emailError) {
+      queueEmail({
+        to: user.email,
+        subject: 'Password Reset Request',
+        template: 'password-reset', // Assuming there's a password-reset template, otherwise fallback to plain text body if generic template exists
+        data: {
+          userName: user.fullName || user.firstName,
+          resetUrl: resetUrl,
+          appUrl: frontendUrl,
+        },
+        priority: 'high'
+      }).catch(emailError => {
         console.error('Failed to queue password reset email:', emailError);
-        // Clear tokens if email fails to send
-        user.resetPasswordToken = undefined;
-        user.resetPasswordExpires = undefined;
-        await user.save();
-        
-        return res.status(500).json({
-          success: false,
-          message: 'Error sending password reset email. Please try again later.',
-        });
-      }
+      });
 
       return res.json({
         success: true,

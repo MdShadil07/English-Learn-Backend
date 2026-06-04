@@ -1,0 +1,137 @@
+{
+  "phenomena": [
+    {
+      "id": "schwa_insertion",
+      "name": "Schwa insertion",
+      "description": "Insertion of a weak vowel (schwa) inside or between consonant clusters.",
+      "affectedSounds": ["schwa", "AH", "AX"],
+      "difficulty": "medium",
+      "practiceDrills": [
+        "cluster-reduction: slow repetition of clusters without inserting vowels",
+        "minimal-contrast: practice minimal pairs with and without schwa insertions"
+      ],
+      "visualKey": "tongue_retract"
+    },
+    {
+      "id": "cluster_simplification",
+      "name": "Consonant cluster simplification",
+      "description": "Simplifying consonant clusters by inserting vowels or dropping consonants (e.g., \"school\" → \"iskool\").",
+      "affectedSounds": ["clusters", "epenthetic vowels"],
+      "difficulty": "hard",
+      "practiceDrills": [
+        "cluster_slow_repeat: practice clusters slowly then accelerate",
+        "isolation-drill: isolate cluster consonants before merging into word"
+      ],
+      "visualKey": "cluster_maintain"
+    }
+    ,
+    {
+      "id": "aspiration_mismatch",
+      "name": "Aspiration mismatch",
+      "description": "Weak or missing aspiration on voiceless plosives (p,t,k) compared to expected native-like burst.",
+      "affectedSounds": ["p","t","k","aspiration"],
+      "difficulty": "medium",
+      "practiceDrills": [
+        "aspiration-puff: hold out a small puff after voiceless stops",
+        "minimal-voicing: contrast voiced vs voiceless pairs"
+      ],
+      "visualKey": "aspiration_burst"
+    },
+    {
+      "id": "final_consonant_drop",
+      "name": "Final consonant reduction",
+      "description": "Dropping or weakening of final consonants, leading to missing endings in past tense or plurals.",
+      "affectedSounds": ["t","d","s","z"],
+      "difficulty": "hard",
+      "practiceDrills": [
+        "hold-final: sustain final consonant closure then release",
+        "word-chains: practice lists emphasizing final consonants"
+      ],
+      "visualKey": "final_release"
+    },
+    {
+      "id": "dentalization",
+      "name": "Dentalization",
+      "description": "Tongue tip contacts the teeth for alveolar sounds, producing a dentalized quality.",
+      "affectedSounds": ["t","d","n","l"],
+      "difficulty": "medium",
+      "practiceDrills": [
+        "tip-placement: practice placing tongue behind upper alveolar ridge",
+        "minimal-contrast: practice between dentalized and non-dentalized targets"
+      ],
+      "visualKey": "tongue_tip_dental"
+    },
+    {
+      "id": "vowel_neutralization",
+      "name": "Vowel neutralization",
+      "description": "Reduction of vowel quality towards a centralized schwa-like sound in unstressed syllables or even in stressed positions.",
+      "affectedSounds": ["AH","AX","IH","EH","UH"],
+      "difficulty": "medium",
+      "practiceDrills": [
+        "vowel-targets: exaggerate full vowel quality in slow motion",
+        "contrast-drill: minimal pairs focusing on vowel distinction"
+      ],
+      "visualKey": "vowel_front_back"
+    },
+    {
+      "id": "stress_shift",
+      "name": "Stress shift",
+      "description": "Shifting primary lexical stress causing syllable timing and intelligibility changes.",
+      "affectedSounds": ["stress","timing"],
+      "difficulty": "hard",
+      "practiceDrills": [
+        "stress-tap: clap on stressed syllable and speak rhythm",
+        "metronome-drill: read sentences aligned to a metronome"
+      ],
+      "visualKey": "stress_wave"
+    },
+    {
+      "id": "syllable_clipping",
+      "name": "Syllable clipping",
+      "description": "Shortening or omitting weak syllables leading to compressed words.",
+      "affectedSounds": ["timing","length"],
+      "difficulty": "medium",
+      "practiceDrills": [
+        "lengthen-syllable: hold vowel length for target syllables",
+        "syllable-count: chant syllable counts before saying the word"
+      ],
+      "visualKey": "syllable_clips"
+    },
+    {
+      "id": "epenthetic_vowel",
+      "name": "Epenthetic vowel insertion",
+      "description": "Adding an extra vowel inside consonant clusters (e.g., 'film' → 'fi-lum').",
+      "affectedSounds": ["epenthesis","vowels"],
+      "difficulty": "medium",
+      "practiceDrills": [
+        "cluster-compress: say cluster repeatedly without vowels",
+        "tape-mimic: listen and mimic native cluster tokens"
+      ],
+      "visualKey": "cluster_maintain2"
+    },
+    {
+      "id": "devoicing",
+      "name": "Final consonant devoicing",
+      "description": "Voiced consonants at the ends of words become voiceless (e.g., 'bag' → 'back' quality).",
+      "affectedSounds": ["b","d","g","v"],
+      "difficulty": "medium",
+      "practiceDrills": [
+        "voicing-contrast: alternate voiced/voiceless word pairs",
+        "sustain-voiced: hold voicing through closure"
+      ],
+      "visualKey": "final_release2"
+    },
+    {
+      "id": "glottal_stop_substitution",
+      "name": "Glottal stop substitution",
+      "description": "Replacing plosive release with a glottal stop, affecting clarity of consonant release.",
+      "affectedSounds": ["t","k","glottal"],
+      "difficulty": "hard",
+      "practiceDrills": [
+        "release-practice: practice full oral release instead of glottal stop",
+        "contrast-words: target words with clear oral plosive release"
+      ],
+      "visualKey": "final_release"
+    }
+  ]
+}

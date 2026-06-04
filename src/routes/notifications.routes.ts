@@ -29,25 +29,15 @@ router.post('/:id/read', authenticate, async (req: any, res) => {
       { read: true },
       { new: true }
     );
-
+    
     if (!notification) {
-      return res.status(404).json({
-        success: false,
-        message: 'Notification not found'
-      });
+      return res.status(404).json({ success: false, message: 'Notification not found' });
     }
-
-    return res.json({
-      success: true,
-      data: notification
-    });
+    
+    return res.json({ success: true, data: notification });
   } catch (error) {
     console.error('Error marking notification as read:', error);
-
-    return res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 

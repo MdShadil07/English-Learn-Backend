@@ -89,6 +89,9 @@ class WebSocketService {
   private async setupRedisAdapter(): Promise<void> {
     if (!this.io) return;
 
+    if (this.redisAdapterClients) {
+      await closeSocketRedisClients(this.redisAdapterClients);
+    }
     this.redisAdapterClients = await createSocketRedisClients();
 
     if (!this.redisAdapterClients) {

@@ -24,6 +24,8 @@ import {
   calculateWordAlignmentConfidence,
   tokenizeForAlignment,
 } from './alignment/wordSequenceAligner.js';
+import { unifiedAccuracyCalculator } from '../../utils/calculators/unifiedAccuracyCalculators.js';
+import { pronunciationAccuracyCalculator } from '../../utils/calculators/pronunciationAccuracyCalculator.js';
 
 export interface PassageRecommendationInput {
   cefrLevel?: string;
@@ -68,7 +70,7 @@ export class PronunciationService {
   private readonly attemptValidator = new AttemptValidationService();
   private static readonly ASR_CONFIDENCE_RETRY_THRESHOLD = 0.50;
   private static readonly ASR_CONFIDENCE_CAUTION_THRESHOLD = 0.85;
-  private static readonly ALIGNMENT_CONFIDENCE_RETRY_THRESHOLD = 0.60;
+  private static readonly ALIGNMENT_CONFIDENCE_RETRY_THRESHOLD = 0.20;
   private static readonly SEMANTIC_CONFIDENCE_RETRY_THRESHOLD = 0.55;
 
   async createPracticeSession(userId: string, recommendationInput: PassageRecommendationInput) {
@@ -532,58 +534,7 @@ export class PronunciationService {
         };
       }
 
-      if (asrConfidence < PronunciationService.ASR_CONFIDENCE_RETRY_THRESHOLD) {
-        setAttemptState(attempt, 'retry_required');
-        attempt.errorMessage = "We couldn't analyze this recording reliably. Please retry in a quieter place or move closer to the microphone.";
-        attempt.drillRecommendations = [];
-        attempt.wordAnalysis = [];
-        attempt.phonemeAnalysis = [];
-        attempt.prosodyAnalysis = this.mergeProsodyWithAudioQuality(
-          {
-            averageSpeakingRate: this.estimateSpeakingRate(pipelineResult.transcription.text, jobData.metadata),
-            validationOnly: true,
-            classification: 'low_confidence_asr',
-          },
-          jobData.metadata
-        );
-        // Calculate clarity based on recognized vs expected transcript
-        const clarityScore = this.calculateFallbackClarity(jobData.transcript, pipelineResult.transcription.text);
-        attempt.scores = {
-          pronunciation: 0,
-          fluency: 0,
-          stress: 0,
-          intonation: 0,
-          clarity: clarityScore,
-        };
-        logger.warn({ 
-          attemptId, 
-          asrConfidence, 
-          clarityScore,
-          threshold: PronunciationService.ASR_CONFIDENCE_RETRY_THRESHOLD,
-        }, 'ASR confidence below retry threshold - calculating fallback clarity');
-        await attempt.save();
-
-        await setSessionTerminalState(attempt.sessionId, 'failed', 'retry_required');
-
-        if (attempt.uploadSessionId) {
-          await setUploadSessionState(attempt.uploadSessionId, {
-            status: 'retry_required',
-            errorMessage: attempt.errorMessage,
-            observability: {
-              ...(jobData.metadata?.observability as Record<string, unknown> || {}),
-              asrRetryRequired: true,
-              queueLatencyMs: Date.now() - jobData.submittedAt,
-              averageAnalysisTimeMs: Date.now() - jobData.submittedAt,
-              analysisCompletedAt: new Date(),
-            },
-          });
-        }
-
-        pronunciationMetrics.observe('asr.confidence', asrConfidence);
-        pronunciationMetrics.increment('analysis.retry_required');
-        pronunciationMetrics.increment('asr.retry_frequency');
-        return attempt;
-      }
+      // (Removed arbitrary ASR retry threshold block)
 
       const semanticAssessment = await this.semanticGate.evaluate({
         expectedTranscript: jobData.transcript,
@@ -653,6 +604,38 @@ export class PronunciationService {
         options
       );
 
+      const flatPhones = alignmentResult.wordIntervals.flatMap(w => w.phonemes);
+      if (flatPhones.length > 0) {
+        const acousticFeatures = await this.transcriber.analyzeAcoustics(
+          pipelineResult.normalizedAudioPath,
+          flatPhones.map(p => ({ phoneme: p.phoneme, startTime: p.startTime, endTime: p.endTime }))
+        );
+        if (acousticFeatures && acousticFeatures.phones) {
+          let acousticCursor = 0;
+          for (const word of alignmentResult.wordIntervals) {
+            for (const phone of word.phonemes) {
+              const features = acousticFeatures.phones[acousticCursor];
+              if (features && features.phoneme === phone.phoneme.toUpperCase()) {
+                phone.pitchMean = features.pitchMean;
+                phone.pitchMax = features.pitchMax;
+                phone.pitchSlope = features.pitchSlope;
+                phone.rmsDb = features.rmsDb;
+                phone.spectralCentroid = features.spectralCentroid;
+                phone.mfccMean = features.mfccMean;
+              } else if (features) {
+                phone.pitchMean = features.pitchMean;
+                phone.pitchMax = features.pitchMax;
+                phone.pitchSlope = features.pitchSlope;
+                phone.rmsDb = features.rmsDb;
+                phone.spectralCentroid = features.spectralCentroid;
+                phone.mfccMean = features.mfccMean;
+              }
+              acousticCursor++;
+            }
+          }
+        }
+      }
+
       setAttemptState(attempt, 'analyzing');
       await setSessionProgress(attempt.sessionId, 'analyzing');
       if (attempt.uploadSessionId) {
@@ -669,12 +652,14 @@ export class PronunciationService {
         analysis.drillRecommendations = [];
       }
 
-      const calibratedScores = this.calibrateScores(analysis.scores, {
-        semanticConfidence: semanticAssessment.semanticConfidence,
-        alignmentConfidence: analysis.metadata.alignmentConfidence,
+      const evaluationResult = await pronunciationAccuracyCalculator.evaluatePronunciation(analysis, {
         asrConfidence,
-        audioQualityScore: this.readAudioQualityScore(jobData.metadata),
+        userId: attempt.userId?.toString(),
+        expectedTranscript: jobData.transcript,
+        recognizedTranscript: transcriptionText,
       });
+      const calibratedScores = evaluationResult.adjustedScores;
+
       const passageSeverity = this.classifyPassageSeverity({
         classification: semanticAssessment.classification,
         semanticConfidence: semanticAssessment.semanticConfidence,
@@ -707,8 +692,15 @@ export class PronunciationService {
       };
 
       attempt.scores = calibratedScores;
+      if (evaluationResult.nlpErrors && evaluationResult.nlpErrors.length > 0) {
+        (attempt as any).metadata = { ...((attempt as any).metadata || {}), grammarErrors: evaluationResult.nlpErrors };
+      }
       attempt.severity = passageSeverity.level;
-      const wordAnalysisWithAnimation = this.enrichWordAnalysisWithAnimationCues(analysis.wordAnalysis);
+      
+      // Refine word analysis using acoustic confidence from calculator
+      const refinedWordAnalysis = pronunciationAccuracyCalculator.refineWordAnalysis(analysis.wordAnalysis, asrConfidence);
+      const wordAnalysisWithAnimation = this.enrichWordAnalysisWithAnimationCues(refinedWordAnalysis);
+      
       attempt.wordAnalysis = wordAnalysisWithAnimation;
       attempt.phonemeAnalysis = analysis.phonemeAnalysis;
       attempt.phonemeTimeline = analysis.phonemeTimeline;
@@ -976,6 +968,8 @@ export class PronunciationService {
   ) {
     setAttemptState(attempt, 'retry_required');
     attempt.errorMessage = validation.reason;
+    attempt.attemptClassification = validation.classification;
+    attempt.transcript = validation.recognizedTranscript;
     attempt.scores = {
       pronunciation: 0,
       fluency: 0,
@@ -1154,7 +1148,7 @@ export class PronunciationService {
 
     // If very few words match and confidence is high, something is very wrong
     // Could be: user read different text, microphone captured wrong audio, etc.
-    if (wordSimilarity < 0.3 && asrConfidence > 0.7) {
+    if (wordSimilarity < 0.15 && asrConfidence > 0.7) {
       return {
         isValid: false,
         issue: 'The recognized speech does not match the expected text. Please ensure you are reading the correct passage.',

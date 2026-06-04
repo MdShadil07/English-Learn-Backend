@@ -14,32 +14,10 @@ export interface AIChatConversationTurnJobData {
 
 export const AI_CHAT_CONVERSATION_QUEUE = 'ai-chat-conversation-persistence';
 
-const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-
-const redisOptions = {
-  lazyConnect: true,
-  maxRetriesPerRequest: null,
-  enableReadyCheck: true,
-  connectTimeout: 5000,
-  retryStrategy: (times: number) => Math.min(times * 50, 2000),
-  reconnectOnError: (_err: any) => true,
-};
-
-export const aiChatConversationQueueConnection = new (Redis as any)(redisUrl, redisOptions);
-
-// Attach safe event handlers to avoid unhandled 'error' events
-aiChatConversationQueueConnection.on('error', (err: any) => {
-  console.error('[Redis:aiChatConversationQueue] error', err);
-});
-aiChatConversationQueueConnection.on('connect', () => {
-  console.log('[Redis:aiChatConversationQueue] connect');
-});
-aiChatConversationQueueConnection.on('close', () => {
-  console.log('[Redis:aiChatConversationQueue] connection closed');
-});
+import { sharedBullmqConnection } from '../config/sharedBullmqConnection.js';
 
 export const aiChatConversationQueue = new Queue<AIChatConversationTurnJobData>(AI_CHAT_CONVERSATION_QUEUE, {
-  connection: aiChatConversationQueueConnection,
+  connection: sharedBullmqConnection,
   defaultJobOptions: {
     attempts: Number(process.env.AI_CHAT_PERSISTENCE_ATTEMPTS || 5),
     backoff: {
@@ -99,5 +77,4 @@ export async function getAIChatConversationQueueStats() {
 
 export async function shutdownAIChatConversationQueue(): Promise<void> {
   await aiChatConversationQueue.close();
-  await aiChatConversationQueueConnection.quit();
 }

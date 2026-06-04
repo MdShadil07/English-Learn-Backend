@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { parse } from 'csv-parse/sync';
+// @ts-ignore
+import csv from 'csv-parse/lib/sync';
 
 // Simple tuning tool: reads a labeled CSV with columns [attemptId,phenomenonLabel,confidence,labelerDecision]
 // and adjusts the patternWeights.json by increasing weights for phenomena frequently confirmed,
@@ -17,7 +18,7 @@ type LabelRow = {
 
 export function tuneWeightsFromCsv(csvPath: string) {
   const content = fs.readFileSync(csvPath, 'utf8');
-  const records = parse(content, { columns: true, skip_empty_lines: true });
+  const records = csv(content, { columns: true, skip_empty_lines: true });
   const counts: Record<string, { yes: number; no: number; maybe: number }> = {};
 
   records.forEach((r: any) => {

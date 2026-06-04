@@ -1,22 +1,5 @@
 import { Queue } from 'bullmq';
-import Redis from 'ioredis';
-
-const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-
-const redisOptions = {
-  lazyConnect: true,
-  maxRetriesPerRequest: null,
-  enableReadyCheck: true,
-  connectTimeout: 5000,
-  retryStrategy: (times: number) => Math.min(times * 50, 2000),
-  reconnectOnError: (_err: any) => true,
-};
-
-const redisConnection = new (Redis as any)(redisUrl, redisOptions);
-
-redisConnection.on('error', (err: any) => console.error('[Redis:speechAnalysisQueue] error', err));
-redisConnection.on('connect', () => console.log('[Redis:speechAnalysisQueue] connect'));
-redisConnection.on('close', () => console.log('[Redis:speechAnalysisQueue] connection closed'));
+import { sharedBullmqConnection } from '../config/sharedBullmqConnection.js';
 
 export interface SpeechAnalysisJobData {
   attemptId: string;
@@ -32,7 +15,7 @@ export interface SpeechAnalysisJobData {
 }
 
 export const speechAnalysisQueue = new Queue<SpeechAnalysisJobData>('speech-analysis', {
-  connection: redisConnection,
+  connection: sharedBullmqConnection,
   defaultJobOptions: {
     attempts: 3,
     backoff: {
@@ -63,7 +46,6 @@ export async function queueSpeechAnalysis(data: SpeechAnalysisJobData) {
 export async function shutdownSpeechAnalysisQueue() {
   try {
     await speechAnalysisQueue.close();
-    await redisConnection.quit();
     console.log('✅ Speech analysis queue shut down');
   } catch (error) {
     console.error('❌ Error shutting down speech analysis queue', error);

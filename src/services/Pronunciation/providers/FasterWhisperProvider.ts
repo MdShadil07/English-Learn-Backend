@@ -7,7 +7,7 @@ export class FasterWhisperProvider implements TranscriptionProvider {
   private readonly baseUrl: string;
   private readonly timeout: number;
 
-  constructor(baseUrl: string = process.env.SPEECH_WORKER_URL || 'http://localhost:8001', timeout: number = 30000) {
+  constructor(baseUrl: string = process.env.SPEECH_WORKER_URL || 'http://localhost:8001', timeout: number = 90000) {
     this.baseUrl = baseUrl;
     this.timeout = timeout;
   }
@@ -94,6 +94,34 @@ export class FasterWhisperProvider implements TranscriptionProvider {
     } catch (error) {
       logger.warn({ error: error instanceof Error ? error.message : String(error) }, 'Speech worker health check failed');
       return false;
+    }
+  }
+
+  async analyzeAcoustics(
+    audioPath: string,
+    phones: Array<{ phoneme: string; startTime: number; endTime: number }>
+  ): Promise<any> {
+    const startTime = Date.now();
+    try {
+      logger.info({ audioPath, phoneCount: phones.length }, 'Starting acoustic analysis with Python worker');
+      const response = await axios.post(
+        `${this.baseUrl}/acoustic/phonemes`,
+        { audioPath, phones },
+        {
+          timeout: this.timeout,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+      const duration = Date.now() - startTime;
+      telemetryService.recordServiceCall('acoustic_analysis', duration, false);
+      return response.data;
+    } catch (error) {
+      telemetryService.recordServiceCall('acoustic_analysis', Date.now() - startTime, true);
+      logger.warn({
+        audioPath,
+        error: error instanceof Error ? error.message : String(error)
+      }, 'Acoustic analysis failed, continuing without acoustic features');
+      return null;
     }
   }
 }

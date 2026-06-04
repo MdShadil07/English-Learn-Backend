@@ -5,6 +5,12 @@ export interface AlignmentPhoneInterval {
   durationMs: number;
   confidence?: number;
   source?: 'mfa' | 'synthetic' | 'whisper-estimated';
+  pitchMean?: number;
+  pitchMax?: number;
+  pitchSlope?: number;
+  rmsDb?: number;
+  spectralCentroid?: number;
+  mfccMean?: number[];
 }
 
 export interface AlignmentWordInterval {

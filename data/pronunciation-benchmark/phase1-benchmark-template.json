@@ -1,0 +1,21 @@
+{
+  "datasetName": "phase1-pronunciation-benchmark",
+  "version": 1,
+  "description": "Template for manually annotated Indian-English pronunciation benchmark data used to tune Phase 1 trust foundation behavior.",
+  "fields": [
+    "speakerId",
+    "speakerRegion",
+    "l1Background",
+    "proficiencyBand",
+    "passageId",
+    "expectedTranscript",
+    "recognizedTranscript",
+    "wordLevelLabels",
+    "phonemeLevelLabels",
+    "acceptableVariationLabels",
+    "audioQualityLabel",
+    "semanticRelevanceLabel",
+    "notes"
+  ],
+  "items": []
+}

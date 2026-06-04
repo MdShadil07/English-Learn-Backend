@@ -14,9 +14,11 @@ type CoachLlmInput = {
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 const GEMINI_TIMEOUT_MS = Number(process.env.COACH_GEMINI_TIMEOUT_MS || 7000);
 const COACH_MODELS = [
-  process.env.COACH_GEMINI_MODEL || 'gemini-1.5-flash-8b',
-  'gemini-2.0-flash',
+  process.env.COACH_GEMINI_MODEL || 'gemini-2.0-flash',
+  'gemini-1.5-flash-8b',
   'gemini-1.5-flash',
+  'gemini-1.5-pro',
+  'gemini-1.0-pro'
 ].filter((value, index, self) => Boolean(value) && self.indexOf(value) === index);
 
 type CoachGeminiResponse = {
@@ -122,31 +124,12 @@ async function generateGeminiCoachNarrative(input: CoachLlmInput): Promise<Coach
 }
 
 function buildHeuristicCoachResponse(attempt: any, base: ReturnType<typeof analyzeCommunication>) {
-  const transcript = (attempt.recognizedTranscript || attempt.transcript || '').trim();
-  const issueHints: string[] = [];
-  if (base.metrics.fillerCount > 0) {
-    issueHints.push('filler words');
-  }
-  if (base.metrics.wps < 2) {
-    issueHints.push('slow pacing');
-  } else if (base.metrics.wps > 3.5) {
-    issueHints.push('fast pacing');
-  }
-  if ((attempt.metadata?.pauses?.length ? attempt.metadata.pauses.reduce((a: number, b: number) => a + b, 0) / attempt.metadata.pauses.length : base.metrics.avgPauseMs) > 400) {
-    issueHints.push('long pauses');
-  }
-
-  const dominantIssue = issueHints[0] || 'overall delivery';
   return {
-    narrative: `Your ${dominantIssue} is the main focus. Keep the reading steady, reduce hesitation, and speak in phrase chunks so the message lands more naturally.`,
-    suggestions: [
-      'Read one sentence at a time and pause at punctuation.',
-      'Replace filler words with a silent breath.',
-      transcript ? 'Repeat the same passage twice and compare pacing.' : 'Repeat a short passage twice and compare pacing.',
-    ],
-    focus: dominantIssue,
-    summary: 'Heuristic fallback applied because Gemini did not return a valid coach payload.',
-    source: 'heuristic-fallback',
+    narrative: 'Service is not running or there is some issue.',
+    suggestions: [],
+    focus: 'service-issue',
+    summary: 'Communication coach service is currently unavailable.',
+    source: 'error-fallback',
   };
 }
 

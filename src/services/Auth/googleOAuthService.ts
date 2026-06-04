@@ -317,7 +317,7 @@ class GoogleOAuthService {
         // Only send if welcome email hasn't been sent yet
         if (!user.welcomeEmailSent) {
           try {
-            await queueEmail({
+            queueEmail({
               to: user.email,
               subject: 'Welcome to CognitoSpeak! 🎉',
               template: 'welcome',
@@ -326,7 +326,7 @@ class GoogleOAuthService {
                 appUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
               },
               priority: 'high', // Welcome emails are high priority
-            });
+            }).catch(e => console.error('❌ Failed to queue welcome email:', e));
             console.log('✅ Welcome email queued for:', user.email);
             
             // Mark welcome email as sent

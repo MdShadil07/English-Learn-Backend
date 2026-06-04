@@ -141,13 +141,21 @@ export class SpeechProcessingPipeline {
       }
 
       const durationMs = Math.max(0, segment.end - segment.start);
-      const perTokenDuration = durationMs > 0 ? durationMs / tokens.length : 0;
+      const totalChars = tokens.reduce((sum, t) => sum + t.length, 0);
+      let currentStart = segment.start;
 
-      return tokens.map((word, index) => ({
-        word,
-        start: Math.round((segment.start + index * perTokenDuration) * 1000) / 1000,
-        end: Math.round((segment.start + (index + 1) * perTokenDuration) * 1000) / 1000,
-      }));
+      return tokens.map((word) => {
+        const wordRatio = totalChars > 0 ? word.length / totalChars : 1 / tokens.length;
+        const wordDuration = durationMs * wordRatio;
+        const wordEnd = currentStart + wordDuration;
+        const result = {
+          word,
+          start: Math.round(currentStart * 1000) / 1000,
+          end: Math.round(wordEnd * 1000) / 1000,
+        };
+        currentStart = wordEnd;
+        return result;
+      });
     });
 
     const transcriptionWords = Array.isArray(transcriptResult.words) && transcriptResult.words.length > 0

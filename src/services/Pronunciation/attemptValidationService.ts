@@ -123,19 +123,19 @@ export class AttemptValidationService {
       detectedLanguage: language,
     };
 
-    if (similarity > 0.40 && matchedRatio >= 0.30) {
+    if (similarity > 0.15 || matchedRatio >= 0.10) {
       return this.result(input, 'valid_reading', true, metrics);
     }
 
-    if (matchedRatio >= 0.15 && omissionRatio >= 0.30) {
+    if (matchedRatio >= 0.10 && omissionRatio >= 0.20) {
       return this.result(input, 'partial_reading', false, metrics);
     }
 
-    if ((insertionRatio > 0.80 || (matchedRatio < 0.10 && recognizedWords.length >= Math.max(4, expectedWords.length * 0.6))) && similarity < 0.20) {
+    if ((insertionRatio > 0.85 || (matchedRatio < 0.10 && recognizedWords.length >= Math.max(4, expectedWords.length * 0.6))) && similarity < 0.20) {
       return this.result(input, 'random_speech', false, metrics);
     }
 
-    if (similarity < 0.25) {
+    if (similarity < 0.20) {
       return this.result(input, 'wrong_passage', false, metrics);
     }
 

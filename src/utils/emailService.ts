@@ -31,10 +31,10 @@ const createTransporter = async () => {
       },
       // Production-ready settings
       pool: true, // Use connection pooling for better performance
-      maxConnections: 10, // Max 10 concurrent connections
-      maxMessages: 100, // Send max 100 messages per connection
+      maxConnections: 50, // Max 50 concurrent connections for scale
+      maxMessages: 10000, // Send max 10000 messages per connection
       rateDelta: 1000, // Rate limit window
-      rateLimit: 10, // Max 10 messages per second
+      rateLimit: 100, // Max 100 messages per second
       connectionTimeout: 10000, // 10s timeout for connecting to SMTP server
       greetingTimeout: 10000,   // 10s timeout for SMTP greeting
       socketTimeout: 10000,     // 10s timeout for socket idle

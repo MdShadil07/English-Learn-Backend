@@ -115,7 +115,7 @@ export class PhonemeScoringService {
       });
       const expectedPhonemes = expectedWord.expectedPhonemes;
 
-      if (!alignedWord || pair.confidence < WORD_SCORING_CONFIDENCE_THRESHOLD) {
+      if (!alignedWord) {
         const componentScores = {
           phonemeCorrectness: 0,
           consonantCompletion: 0,
@@ -124,22 +124,19 @@ export class PhonemeScoringService {
           durationTiming: 0,
         };
 
-        // Try to extract actual phonemes even with low confidence
-        const actualPhonemes = alignedWord?.phonemes?.map((item) => item.phoneme) || [];
-
         wordAnalysis.push({
           word: targetWord,
           expectedPhonemes,
           expectedStress: expectedWord.expectedStress,
           expectedSyllables: expectedWord.expectedSyllables,
-          actualPhonemes,
+          actualPhonemes: [],
           severity: 2,
           score: 0,
-          startTime: alignedWord?.startTime || 0,
-          endTime: alignedWord?.endTime || 0,
+          startTime: 0,
+          endTime: 0,
           issueType: pair.operation === 'deletion' ? 'omission' : 'alignment',
           alignmentConfidence: pair.confidence,
-          alignedWord: alignedWord?.word ?? null,
+          alignedWord: null,
           componentScores,
         });
 
@@ -160,11 +157,10 @@ export class PhonemeScoringService {
         logger.warn(
           {
             targetWord,
-            alignedWord: alignedWord?.word ?? null,
             alignmentConfidence: pair.confidence,
             operation: pair.operation,
           },
-          'Skipped phoneme scoring for low-confidence word alignment'
+          'Skipped phoneme scoring for missing aligned word'
         );
 
         continue;
@@ -187,8 +183,18 @@ export class PhonemeScoringService {
       }
 
       const comparison = this.comparePhonemeSequences(expectedPhonemes, actualPhonemes);
-      const componentScores = this.calculateComponentScores(expectedPhonemes, actualPhonemes, comparison, alignedWord?.durationMs || 0, expectedWord.expectedSyllables);
-      const score = this.combineComponentScores(componentScores);
+      const componentScores = this.calculateComponentScores(expectedPhonemes, actualPhonemes, comparison, alignedWord, expectedWord.expectedSyllables, expectedWord.expectedStress);
+      let score = this.combineComponentScores(componentScores);
+      
+      // If the ASR detected a lexical substitution (different word spoken), heavily penalize the score
+      if (pair.operation === 'substitution' && alignedWord?.word.toLowerCase() !== pair.targetWord?.toLowerCase()) {
+         // Even if phonemes matched (like mat vs matte), it's the wrong word!
+         score = Math.round(score * 0.6); // 40% penalty for substitution
+      } else if (pair.confidence < 0.8) {
+         // Harsher penalty threshold for low alignment confidence
+         score = Math.round(score * Math.max(0.6, pair.confidence));
+      }
+      
       const severity = score >= 90 ? 0 : score >= 75 ? 1 : 2;
       const issueType = score >= 90 ? 'stable' : this.resolvePrimaryIssueType(comparison.events);
 
@@ -259,8 +265,32 @@ export class PhonemeScoringService {
     const errorRate = (substitutionCount + omissionCount + insertionCount) / totalPhonemes;
     const fluencyScore = Math.max(0, Math.min(100, Math.round(100 - (errorRate * 60) - (wordAnalysis.filter((item) => item.score < 70).length * 4))));
     const stressScore = Math.max(0, Math.round(wordAnalysis.reduce((sum, item) => sum + (item.componentScores?.stressCorrectness || 0), 0) / Math.max(1, wordAnalysis.length)));
-    // Intonation: weighted blend of stress accuracy and fluency (proxy for pitch variation)
-    const intonationScore = Math.max(0, Math.round(stressScore * 0.55 + fluencyScore * 0.30 + clarityScore * 0.15));
+    // Intonation: Use actual acoustic pitch contour (F0) if available!
+    let intonationScore = Math.max(0, Math.round(stressScore * 0.55 + fluencyScore * 0.30 + clarityScore * 0.15));
+    const allPhones = alignment.wordIntervals.flatMap(w => w.phonemes);
+    const validPitchPhones = allPhones.filter(p => p.pitchMean && p.pitchMean > 0);
+    
+    if (validPitchPhones.length > 5) {
+      // Calculate pitch variation across the sentence
+      const meanPitches = validPitchPhones.map(p => p.pitchMean || 0);
+      const globalMean = meanPitches.reduce((a, b) => a + b, 0) / meanPitches.length;
+      const variance = meanPitches.reduce((a, b) => a + Math.pow(b - globalMean, 2), 0) / meanPitches.length;
+      const stdDev = Math.sqrt(variance);
+      
+      // Use Coefficient of Variation (CV) to account for different vocal ranges (male vs female)
+      // Normal conversational speech CV is around 0.15 to 0.25
+      const cv = globalMean > 0 ? stdDev / globalMean : 0;
+      
+      // Map CV to a 0-100 score. A CV of 0.18 is considered excellent (100).
+      const intonationBase = Math.min(100, Math.max(0, (cv / 0.18) * 100));
+      
+      // Blend acoustic intonation (70%) with fluency/clarity (30%)
+      intonationScore = Math.round(intonationBase * 0.7 + fluencyScore * 0.2 + clarityScore * 0.1);
+      
+      if (this.debugLogsEnabled) {
+         logger.info({ stdDev, globalMean, intonationBase, intonationScore }, 'Acoustic intonation evaluated');
+      }
+    }
     const weakestWords = wordAnalysis.filter((item) => item.score < 82).slice(0, 4);
     const alignmentConfidence = this.calculateAlignmentConfidence(alignment, phonemeTimeline, pairedWords);
     const mtiLikelihood = this.detectMtiPatterns(phonemeTimeline);
@@ -480,21 +510,88 @@ export class PhonemeScoringService {
     expected: string[],
     actual: string[],
     comparison: ReturnType<PhonemeScoringService['comparePhonemeSequences']>,
-    actualDurationMs: number,
-    expectedSyllables: number
+    alignedWord: ForcedAlignmentResult['wordIntervals'][number] | null,
+    expectedSyllables: number,
+    expectedStress: number[] = []
   ) {
     const totalEvents = Math.max(1, comparison.events.length);
     const substitutionCount = comparison.events.filter((event) => event.type === 'substitution').length;
     const deletionCount = comparison.events.filter((event) => event.type === 'deletion').length;
-    const insertionCount = comparison.events.filter((event) => event.type === 'insertion').length;
+    const insertionCount = comparison.events.filter((event: any) => event.type === 'insertion').length;
     const vowelMismatchCount = comparison.events.filter((event) => event.expected && event.actual && isVowel(event.expected) && event.expected !== event.actual).length;
     const consonantOmissionCount = comparison.events.filter((event) => event.type === 'deletion' && event.expected && !isVowel(event.expected)).length;
     const actualSyllables = actual.filter((phoneme) => isVowel(phoneme)).length || expectedSyllables;
 
-    const phonemeCorrectness = Math.max(0, Math.round(100 - ((comparison.distance / Math.max(1, expected.length, actual.length)) * 100)));
+    let avgAcousticConfidence = 1.0;
+    
+    if (alignedWord && alignedWord.phonemes.length > 0) {
+      const validAcoustic = alignedWord.phonemes.filter(p => typeof p.confidence === 'number');
+      if (validAcoustic.length > 0) {
+        avgAcousticConfidence = validAcoustic.reduce((acc, p) => acc + (p.confidence || 0), 0) / validAcoustic.length;
+      }
+    }
+
+    // Integrate acoustic confidence directly into phonemeCorrectness
+    let baseCorrectness = Math.max(0, 100 - ((comparison.distance / Math.max(1, expected.length, actual.length)) * 100));
+    
+    // If exact string match (like synthetic fallback), we rely heavily on acoustic confidence
+    if (comparison.distance === 0 && avgAcousticConfidence < 1.0) {
+      baseCorrectness = Math.round(100 * avgAcousticConfidence);
+    }
+    
+    const phonemeCorrectness = Math.round(baseCorrectness);
     const consonantCompletion = Math.max(0, 100 - Math.round((consonantOmissionCount / Math.max(1, expected.filter((phoneme) => !isVowel(phoneme)).length)) * 100));
     const vowelQuality = Math.max(0, 100 - Math.round((vowelMismatchCount / Math.max(1, expected.filter((phoneme) => isVowel(phoneme)).length)) * 100));
-    const stressCorrectness = Math.max(0, 100 - Math.round((Math.abs(expectedSyllables - actualSyllables) / Math.max(1, expectedSyllables)) * 100));
+    
+    // --- Real Stress Calculation ---
+    // Stress correlates: pitch peak, duration, and energy.
+    let stressScore = 100;
+    
+    if (expectedSyllables > 1 && expectedStress.length > 0 && alignedWord && alignedWord.phonemes.length > 0) {
+      // Find all vowels in the actual phonemes
+      const vowelIntervals = alignedWord.phonemes.filter(p => isVowel(p.phoneme));
+      
+      if (vowelIntervals.length > 1) {
+        // Calculate prominence for each vowel
+        const prominences = vowelIntervals.map(v => {
+          // Normalize Pitch, Energy, and Duration
+          // Average pitch is typically 150-250Hz. rmsDb usually around -30 to -10. Duration 50-200ms.
+          const pitch = v.pitchMax || v.pitchMean || 0;
+          const energy = v.rmsDb && v.rmsDb > -60 ? v.rmsDb : -60; 
+          const duration = v.durationMs || 0;
+          
+          return (pitch * 0.4) + (energy * 1.5) + (duration * 0.3); // Weighted prominence
+        });
+        
+        const maxProminence = Math.max(...prominences);
+        const mostProminentIndex = prominences.indexOf(maxProminence);
+        
+        // Find expected primary stress index
+        const expectedPrimaryIndex = expectedStress.findIndex(s => s === 1);
+        
+        if (expectedPrimaryIndex !== -1) {
+          // Compare the index of the most prominent vowel to the expected primary stress index
+          // We must be careful: user might have missed a syllable, so index might not perfectly match.
+          // We use the actualSyllables count. If they mismatch significantly, we penalize.
+          if (mostProminentIndex !== expectedPrimaryIndex) {
+            stressScore -= 30; // Misplaced primary stress
+          }
+        }
+        
+        // Check for completely flat prosody (robot voice)
+        const minProminence = Math.min(...prominences);
+        if (maxProminence > 0 && maxProminence - minProminence < 15) {
+          stressScore = Math.max(0, stressScore - 20); // Flat energy/pitch
+        }
+      }
+    } else {
+      // Fallback or monosyllabic
+      stressScore = Math.max(0, 100 - Math.round((Math.abs(expectedSyllables - actualSyllables) / Math.max(1, expectedSyllables)) * 100));
+    }
+    
+    const stressCorrectness = Math.max(0, Math.min(100, Math.round(stressScore)));
+    
+    const actualDurationMs = alignedWord?.durationMs || 0;
     const expectedDurationMs = Math.max(180, expected.length * 85);
     const durationTiming = Math.max(0, 100 - Math.round((Math.abs(expectedDurationMs - actualDurationMs) / Math.max(expectedDurationMs, 1)) * 100));
 
@@ -503,7 +600,7 @@ export class PhonemeScoringService {
       consonantCompletion,
       vowelQuality,
       stressCorrectness,
-      durationTiming: Math.max(durationTiming, totalEvents > 0 ? 100 - Math.round((insertionCount + substitutionCount) / totalEvents * 35) : durationTiming),
+      durationTiming: Math.max(durationTiming, totalEvents > 0 ? 100 - Math.round((comparison.events.filter(e => e.type === 'insertion').length + substitutionCount) / totalEvents * 35) : durationTiming),
     };
   }
 
@@ -515,16 +612,21 @@ export class PhonemeScoringService {
     durationTiming: number;
   }) {
     // Weights calibrated for Indian English speakers:
-    // - Stress raised to 0.20 (syllable-timed rhythm is #1 intelligibility issue)
-    // - Vowel quality raised to 0.20 (Indian languages have different vowel inventories)
-    // - Duration timing lowered to 0.06 (least reliable without F0 analysis)
-    return Math.round(
-      (componentScores.phonemeCorrectness * 0.32)
-      + (componentScores.consonantCompletion * 0.22)
-      + (componentScores.vowelQuality * 0.20)
-      + (componentScores.stressCorrectness * 0.20)
-      + (componentScores.durationTiming * 0.06)
-    );
+    let score = (componentScores.phonemeCorrectness * 0.40)
+      + (componentScores.consonantCompletion * 0.20)
+      + (componentScores.vowelQuality * 0.25)
+      + (componentScores.stressCorrectness * 0.10)
+      + (componentScores.durationTiming * 0.05);
+      
+    // If phoneme correctness or vowel quality is particularly low, cap the score!
+    // A weighted average masks severe errors (e.g., 80% phoneme correctness + 100% stress = 90% score).
+    const lowestArticulation = Math.min(componentScores.phonemeCorrectness, componentScores.vowelQuality);
+    if (lowestArticulation < 95 && score > lowestArticulation + 5) {
+      // Pull the score down toward the lowest articulation metric
+      score = lowestArticulation + 5;
+    }
+    
+    return Math.max(0, Math.min(100, Math.round(score)));
   }
 
   private resolvePrimaryIssueType(events: Array<{ type: 'match' | 'substitution' | 'insertion' | 'deletion'; expected?: string; actual?: string }>) {

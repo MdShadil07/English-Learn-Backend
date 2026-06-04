@@ -61,12 +61,12 @@ import {
 } from './workers/aiChatConversationPersistenceWorker.js';
 import { shutdownAIChatConversationQueue } from './queues/aiChatConversationQueue.js';
 import { createSpeechAnalysisWorker, shutdownSpeechAnalysisWorker } from './workers/speechAnalysisWorker.js';
+import { shutdownSpeechAnalysisQueue } from './queues/speechAnalysisQueue.js';
 
 // Import WebSocket service
 import { webSocketService } from './services/WebSocket/socketService.js';
 
-// Import email queue service
-import { createEmailWorker, shutdownEmailQueue } from './services/Email/emailQueueService.js';
+import { createEmailWorker, shutdownEmailQueue, shutdownEmailWorker } from './services/Email/emailQueueService.js';
 
 // Connect to database and cache
 async function initializeServices() {
@@ -249,10 +249,12 @@ async function startServer(): Promise<void> {
             shutdownAIChatConversationPersistenceWorker(),
             shutdownAIChatConversationQueue(),
             shutdownSpeechAnalysisWorker(),
+            shutdownSpeechAnalysisQueue(),
             webSocketService.shutdown(),
             database.disconnect(),
             redisCache.disconnect(),
-            shutdownEmailQueue()
+            shutdownEmailQueue(),
+            shutdownEmailWorker()
           ]);
           console.log('✅ Database, cache, and email queue disconnected');
         } catch (error) {
@@ -273,6 +275,7 @@ async function startServer(): Promise<void> {
     // Handle shutdown signals
     process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
     process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    process.on('SIGUSR2', () => gracefulShutdown('SIGUSR2')); // For nodemon / tsx watch restarts
 
     // Handle uncaught exceptions
     process.on('uncaughtException', (error) => {

@@ -4,18 +4,13 @@ const isDevelopment = process.env.NODE_ENV !== 'production';
 
 const pino = (Pino as any).default || Pino;
 
-export const logger = pino({
+export const logger = (pino)({
   name: 'accuracy-engine',
   level: process.env.LOG_LEVEL || (isDevelopment ? 'debug' : 'info'),
-
   formatters: {
-    level: (label: string) => ({
-      level: label,
-    }),
+    level: (label: string) => ({ level: label }),
   },
-
   timestamp: pino.stdTimeFunctions.isoTime,
-
   ...(isDevelopment && {
     transport: {
       target: 'pino-pretty',

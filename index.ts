@@ -13,6 +13,7 @@ import { progressRoutes } from './src/routes/Progress';
 import { userLevelRoutes } from './src/routes/UserLevel';
 import { authRoutes } from './src/routes/auth';
 import { roomRoutes } from './src/routes/Room';
+import { supportRoutes } from './src/routes/Support';
 
 // Import WebSocket service
 import { webSocketService } from './src/services/WebSocket/socketService';
@@ -50,6 +51,7 @@ app.use('/api/accuracy', accuracyRoutes);
 app.use('/api/progress', progressRoutes);
 app.use('/api/level', userLevelRoutes);
 app.use('/api/rooms', roomRoutes);
+app.use('/api/support', supportRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -2,16 +2,27 @@ import { Job, Worker } from 'bullmq';
 import {
   AI_CHAT_CONVERSATION_QUEUE,
   AIChatConversationTurnJobData,
-  aiChatConversationQueueConnection,
 } from '../queues/aiChatConversationQueue.js';
+import Redis from 'ioredis';
 import { conversationPersistenceService } from '../services/Ai Chat/conversationPersistenceService.js';
 
 let aiChatConversationWorker: Worker<AIChatConversationTurnJobData> | null = null;
+let aiChatWorkerConnection: any | null = null;
 
 export function createAIChatConversationPersistenceWorker(): Worker<AIChatConversationTurnJobData> {
   if (aiChatConversationWorker) {
     return aiChatConversationWorker;
   }
+
+  const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+  aiChatWorkerConnection = new (Redis as any)(redisUrl, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: true,
+  });
+
+  aiChatWorkerConnection.on('error', (error: any) => {
+    console.error('AI Chat Worker Redis connection error:', error?.message || error);
+  });
 
   aiChatConversationWorker = new Worker<AIChatConversationTurnJobData>(
     AI_CHAT_CONVERSATION_QUEUE,
@@ -27,7 +38,7 @@ export function createAIChatConversationPersistenceWorker(): Worker<AIChatConver
       };
     },
     {
-      connection: aiChatConversationQueueConnection,
+      connection: aiChatWorkerConnection,
       concurrency: Number(process.env.AI_CHAT_PERSISTENCE_WORKER_CONCURRENCY || 25),
       limiter: {
         max: Number(process.env.AI_CHAT_PERSISTENCE_WORKER_MAX_PER_SECOND || 500),
@@ -56,5 +67,9 @@ export async function shutdownAIChatConversationPersistenceWorker(): Promise<voi
   if (aiChatConversationWorker) {
     await aiChatConversationWorker.close();
     aiChatConversationWorker = null;
+  }
+  if (aiChatWorkerConnection) {
+    await aiChatWorkerConnection.quit();
+    aiChatWorkerConnection = null;
   }
 }
