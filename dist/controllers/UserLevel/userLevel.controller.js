@@ -10,7 +10,7 @@ export class UserLevelController {
     async getUserLevel(req, res) {
         try {
             const { userId } = req.params;
-            const userLevel = await UserLevel.findOne({ userId });
+            const userLevel = await UserLevel.findOne({ userId }).lean();
             if (!userLevel) {
                 res.status(404).json({
                     success: false,
@@ -188,7 +188,7 @@ export class UserLevelController {
     async getStats(req, res) {
         try {
             const { userId } = req.params;
-            const userLevel = await UserLevel.findOne({ userId });
+            const userLevel = await UserLevel.findOne({ userId }).lean();
             if (!userLevel) {
                 res.status(404).json({
                     success: false,

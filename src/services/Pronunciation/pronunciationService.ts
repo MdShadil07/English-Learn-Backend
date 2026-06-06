@@ -26,6 +26,7 @@ import {
 } from './alignment/wordSequenceAligner.js';
 import { unifiedAccuracyCalculator } from '../../utils/calculators/unifiedAccuracyCalculators.js';
 import { pronunciationAccuracyCalculator } from '../../utils/calculators/pronunciationAccuracyCalculator.js';
+import { metricsPublisher } from '../../utils/metricsPublisher.js';
 
 export interface PassageRecommendationInput {
   cefrLevel?: string;
@@ -186,6 +187,7 @@ export class PronunciationService {
     }
 
     // Only use weak phoneme targeting if it doesn't restrict results too much
+    let isWeakPhonemeFilter = false;
     if (user?.pronunciationProfile?.weakPhonemes?.length && !recommendationInput.phonemeTargets?.length) {
       const weakPhonemes = user.pronunciationProfile.weakPhonemes
         .sort((a, b) => a.score - b.score)
@@ -195,13 +197,7 @@ export class PronunciationService {
       if (weakPhonemes.length) {
         // First try with weak phoneme targeting
         query.phonemeTargets = { $in: weakPhonemes };
-        
-        // Check if there are passages with these filters
-        const count = await Passage.countDocuments(query);
-        if (count === 0) {
-          // If no passages found, remove the phoneme filter
-          delete query.phonemeTargets;
-        }
+        isWeakPhonemeFilter = true;
       }
     } else if (recommendationInput.phonemeTargets?.length) {
       query.phonemeTargets = { $in: recommendationInput.phonemeTargets };
@@ -211,18 +207,23 @@ export class PronunciationService {
       query.mtiTargets = { $in: recommendationInput.mtiTargets };
     }
 
-    // Get all matching passages and randomly select one
-    const passages = await Passage.find(query)
-      .sort({ 'difficulty.phonetic': 1, phonemeDensity: -1, createdAt: -1 })
-      .limit(50) // Get up to 50 matching passages
-      .lean();
-
-    if (passages.length > 0) {
-      // Randomly select a passage from the available ones
-      const randomIndex = Math.floor(Math.random() * passages.length);
-      return passages[randomIndex];
+    const count = await Passage.countDocuments(query);
+    if (count > 0) {
+      const skip = Math.floor(Math.random() * count);
+      const passage = await Passage.findOne(query).skip(skip).lean();
+      if (passage) return passage;
     }
 
+    // If no passages matched the weak phoneme filter, try again without it
+    if (isWeakPhonemeFilter) {
+      delete query.phonemeTargets;
+      const count2 = await Passage.countDocuments(query);
+      if (count2 > 0) {
+        const skip2 = Math.floor(Math.random() * count2);
+        const passage2 = await Passage.findOne(query).skip(skip2).lean();
+        if (passage2) return passage2;
+      }
+    }
     // Fallback: remove exercise type restriction and try again
     delete query.exerciseType;
     const fallbackPassages = await Passage.find(query)
@@ -367,12 +368,17 @@ export class PronunciationService {
       }
 
       let pipelineResult;
+
       try {
         // Health check before processing
         const speechWorkerHealthy = await this.transcriber.healthCheck();
         if (!speechWorkerHealthy) {
           logger.warn({ attemptId }, 'Speech worker health check failed before processing');
         }
+        
+        const transStart = Date.now();
+        const memTransBefore = process.memoryUsage();
+        const cpuTransBefore = process.cpuUsage();
         
         pipelineResult = await this.pipeline.process(
           {
@@ -389,6 +395,10 @@ export class PronunciationService {
             },
           }
         );
+
+        const memTransAfter = process.memoryUsage();
+        metricsPublisher.trackPronunciation('transcription', Date.now() - transStart, memTransBefore, memTransAfter, cpuTransBefore, process.cpuUsage());
+        
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         const errorStack = error instanceof Error ? error.stack : undefined;
@@ -399,10 +409,15 @@ export class PronunciationService {
           fullError: JSON.stringify(error),
         }, 'Pipeline processing failed - detailed error log');
         // Handle transcription failures
-        if (errorMessage.includes('SPEECH_WORKER_UNAVAILABLE') || errorMessage.includes('TRANSCRIPTION_FAILED')) {
+        if (
+          errorMessage.includes('SPEECH_WORKER_UNAVAILABLE') || 
+          errorMessage.includes('TRANSCRIPTION_FAILED') ||
+          errorMessage.includes('SPEECH_WORKER_ERROR') ||
+          errorMessage.includes('AUDIO_FILE_NOT_FOUND')
+        ) {
           setAttemptState(attempt, 'retry_required');
           attempt.processingStage = 'failed';
-          attempt.errorMessage = 'Speech recognition service is temporarily unavailable. Please try again later.';
+          attempt.errorMessage = 'Speech recognition service is temporarily unavailable or encountered an error. Please try again later.';
           attempt.transcriptionProvider = 'faster-whisper';
           await attempt.save();
 
@@ -596,20 +611,42 @@ export class PronunciationService {
         }, 'Alignment fallback to expected transcript');
       }
 
+      const alignStart = Date.now();
+      const memAlignBefore = process.memoryUsage();
+      const cpuAlignBefore = process.cpuUsage();
+
+      const analysisDepth = (jobData.metadata?.analysisDepth as 'fast' | 'deep') || 'fast';
+
       const alignmentResult = await this.aligner.alignAudioToTranscript(
         pipelineResult.normalizedAudioPath,
         alignmentTranscript,
         pipelineResult.workspaceDirectory,
         pipelineResult.transcription.words,
-        options
+        { ...options, jobId: attemptId, audioUrl: jobData.audioUrl, audioObjectKey: jobData.audioObjectKey, analysisDepth }
       );
 
-      const flatPhones = alignmentResult.wordIntervals.flatMap(w => w.phonemes);
-      if (flatPhones.length > 0) {
+      metricsPublisher.trackPronunciation('alignment', Date.now() - alignStart, memAlignBefore, process.memoryUsage(), cpuAlignBefore, process.cpuUsage());
+      
+
+      const queryPhones = [];
+      for (const w of alignmentResult.wordIntervals) {
+        for (const p of w.phonemes) {
+          queryPhones.push({ phoneme: p.phoneme, startTime: p.startTime, endTime: p.endTime });
+        }
+      }
+      
+      if (queryPhones.length > 0) {
+        const acousticStart = Date.now();
+        const memAcousticBefore = process.memoryUsage();
+        const cpuAcousticBefore = process.cpuUsage();
+
         const acousticFeatures = await this.transcriber.analyzeAcoustics(
           pipelineResult.normalizedAudioPath,
-          flatPhones.map(p => ({ phoneme: p.phoneme, startTime: p.startTime, endTime: p.endTime }))
+          queryPhones
         );
+
+        metricsPublisher.trackPronunciation('acoustic', Date.now() - acousticStart, memAcousticBefore, process.memoryUsage(), cpuAcousticBefore, process.cpuUsage());
+
         if (acousticFeatures && acousticFeatures.phones) {
           let acousticCursor = 0;
           for (const word of alignmentResult.wordIntervals) {
@@ -645,7 +682,13 @@ export class PronunciationService {
       }
 
       const analysisStart = Date.now();
+      const memScoreBefore = process.memoryUsage();
+      const cpuScoreBefore = process.cpuUsage();
+      
       const analysis = await this.scorer.scoreAlignedPronunciation(jobData.transcript, alignmentResult);
+      
+      metricsPublisher.trackPronunciation('scoring', Date.now() - analysisStart, memScoreBefore, process.memoryUsage(), cpuScoreBefore, process.cpuUsage());
+      
       telemetryService.recordServiceCall('pronunciation', Date.now() - analysisStart, false);
 
       if (asrConfidence < PronunciationService.ASR_CONFIDENCE_CAUTION_THRESHOLD) {
@@ -701,11 +744,12 @@ export class PronunciationService {
       const refinedWordAnalysis = pronunciationAccuracyCalculator.refineWordAnalysis(analysis.wordAnalysis, asrConfidence);
       const wordAnalysisWithAnimation = this.enrichWordAnalysisWithAnimationCues(refinedWordAnalysis);
       
-      attempt.wordAnalysis = wordAnalysisWithAnimation;
-      attempt.phonemeAnalysis = analysis.phonemeAnalysis;
-      attempt.phonemeTimeline = analysis.phonemeTimeline;
+      let rawWordAnalysis: any[] = wordAnalysisWithAnimation;
+      let rawPhonemeAnalysis: any[] = analysis.phonemeAnalysis;
+      let rawPhonemeTimeline: any[] = analysis.phonemeTimeline;
+      let rawDrillRecommendations: any[] = analysis.drillRecommendations;
+      let rawPhenomena: any[] = [];
       attempt.prosodyAnalysis = this.mergeProsodyWithAudioQuality(analysis.prosodyAnalysis, jobData.metadata);
-      attempt.drillRecommendations = analysis.drillRecommendations;
 
       // Phonological profile analysis (neutral pattern-based feedback)
       try {
@@ -721,9 +765,8 @@ export class PronunciationService {
         } as Record<string, unknown>;
 
         if (Array.isArray(profile.dominantPatterns) && profile.dominantPatterns.length) {
-          attempt.drillRecommendations = attempt.drillRecommendations || [];
           const names = profile.dominantPatterns.map((p) => p.replace(/_/g, ' '));
-          attempt.drillRecommendations.push({
+          rawDrillRecommendations.push({
             type: 'pattern-personalized',
             instruction: `Detected pronunciation patterns: ${names.join(', ')}. ${profile.suggestions.slice(0,2).join(' ')}`,
           });
@@ -738,12 +781,11 @@ export class PronunciationService {
             { asrConfidence }
           );
           const fallbackPhenomena = this.deriveFallbackPhenomenaFromWordAnalysis(analysis.wordAnalysis);
-          attempt.phenomena = Array.isArray(phenomena) && phenomena.length ? phenomena : fallbackPhenomena;
+          rawPhenomena = Array.isArray(phenomena) && phenomena.length ? phenomena : fallbackPhenomena;
           // Promote top phenomenon to explicit drill recommendation
-          if (Array.isArray(attempt.phenomena) && attempt.phenomena.length) {
-            const top = [...attempt.phenomena].sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
-            attempt.drillRecommendations = attempt.drillRecommendations || [];
-            attempt.drillRecommendations.unshift({
+          if (Array.isArray(rawPhenomena) && rawPhenomena.length) {
+            const top = [...rawPhenomena].sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
+            rawDrillRecommendations.unshift({
               type: 'phenomenon-drill',
               instruction: `${top.name}: ${top.drills?.map((d: any)=>d.instruction).slice(0,1).join(' ')}`,
             });
@@ -791,10 +833,10 @@ export class PronunciationService {
           intonation: 0,
           clarity: 0,
         };
-        attempt.wordAnalysis = [];
-        attempt.phonemeAnalysis = [];
-        attempt.phonemeTimeline = [];
-        attempt.drillRecommendations = [];
+        rawWordAnalysis = [];
+        rawPhonemeAnalysis = [];
+        rawPhonemeTimeline = [];
+        rawDrillRecommendations = [];
       } else if (analysis.metadata.alignmentConfidence < PronunciationService.ALIGNMENT_CONFIDENCE_RETRY_THRESHOLD) {
         setAttemptState(attempt, 'retry_required');
         attempt.errorMessage = "We couldn't generate detailed phoneme feedback reliably. Please retry with cleaner audio.";
@@ -807,10 +849,10 @@ export class PronunciationService {
         };
         // Preserve the phoneme/word analysis so the UI can still display what was detected.
         // The results are still marked as low-confidence and require retry.
-        attempt.wordAnalysis = this.enrichWordAnalysisWithAnimationCues(analysis.wordAnalysis);
-        attempt.phonemeAnalysis = analysis.phonemeAnalysis;
-        attempt.phonemeTimeline = analysis.phonemeTimeline;
-        attempt.drillRecommendations = [];
+        rawWordAnalysis = this.enrichWordAnalysisWithAnimationCues(analysis.wordAnalysis);
+        rawPhonemeAnalysis = analysis.phonemeAnalysis;
+        rawPhonemeTimeline = analysis.phonemeTimeline;
+        rawDrillRecommendations = [];
       }
       if (attempt.status !== 'retry_required' && asrConfidence < PronunciationService.ASR_CONFIDENCE_CAUTION_THRESHOLD) {
         attempt.errorMessage = 'Analysis completed with caution because the speech recognition confidence was lower than ideal.';
@@ -827,13 +869,13 @@ export class PronunciationService {
           const coachAnalysis = await analyzeCommunicationPremium({
             transcript: attempt.transcript,
             recognizedTranscript: attempt.recognizedTranscript,
-            wordAnalysis: attempt.wordAnalysis,
-            phonemeAnalysis: attempt.phonemeAnalysis,
+            wordAnalysis: rawWordAnalysis,
+            phonemeAnalysis: rawPhonemeAnalysis,
             prosodyAnalysis: attempt.prosodyAnalysis,
             metadata: { ...(jobData.metadata || {}), asrConfidence },
           });
           (attempt as any).coachAnalysis = coachAnalysis;
-          await updateProfileFromAttempt(attempt.userId.toString(), attempt);
+          await updateProfileFromAttempt(attempt.userId.toString(), { ...attempt.toObject(), wordAnalysis: rawWordAnalysis, phonemeAnalysis: rawPhonemeAnalysis, drillRecommendations: rawDrillRecommendations, phenomena: rawPhenomena });
           const profile = await getProfile(attempt.userId.toString());
           (attempt as any).badges = evaluateBadgesFromProfile(profile);
         } catch (coachError) {
@@ -841,7 +883,28 @@ export class PronunciationService {
         }
       }
 
+      // Explicitly clear Mongoose arrays to avoid Subdocument bloat in memory
+      attempt.wordAnalysis = [];
+      attempt.phonemeAnalysis = [];
+      attempt.phonemeTimeline = [];
+      attempt.drillRecommendations = [];
+      attempt.phenomena = [];
+
       await attempt.save();
+
+      // Write massive arrays directly via MongoDB driver
+      await PracticeAttempt.collection.updateOne(
+        { _id: attempt._id },
+        {
+          $set: {
+            wordAnalysis: rawWordAnalysis,
+            phonemeAnalysis: rawPhonemeAnalysis,
+            phonemeTimeline: rawPhonemeTimeline,
+            drillRecommendations: rawDrillRecommendations,
+            phenomena: rawPhenomena,
+          }
+        }
+      );
 
       await setPronunciationJobState(
         attemptId,
@@ -850,8 +913,8 @@ export class PronunciationService {
       );
 
       if (attempt.status === 'completed') {
-        await this.createWordAnalysisDocuments(attempt, analysis.wordAnalysis);
-        await this.updateUserPhonemeProfiles(attempt);
+        await this.createWordAnalysisDocuments(attempt, rawWordAnalysis);
+        await this.updateUserPhonemeProfiles(attempt, rawPhonemeAnalysis, rawWordAnalysis);
       }
 
       await PracticeSession.findByIdAndUpdate(attempt.sessionId, {
@@ -861,7 +924,7 @@ export class PronunciationService {
       });
 
       if (attempt.status === 'completed') {
-        await this.updateUserPronunciationProfile(attempt.userId.toString(), attempt);
+        await this.updateUserPronunciationProfile(attempt.userId.toString(), attempt, rawPhonemeAnalysis);
       }
 
       if (attempt.uploadSessionId) {
@@ -886,6 +949,9 @@ export class PronunciationService {
       } else {
         pronunciationMetrics.increment('analysis.completed');
       }
+      
+      // Force GC hints for heavy structures
+      if (typeof pipelineResult !== 'undefined') pipelineResult = null;
 
       return attempt;
     } catch (error) {
@@ -1033,8 +1099,8 @@ export class PronunciationService {
     pronunciationMetrics.increment('analysis.retry_required');
   }
 
-  private async updateUserPronunciationProfile(userId: string, attempt: any) {
-    const weakPhonemes = (attempt.phonemeAnalysis || []).slice(0, 5).map((item: any) => ({
+  private async updateUserPronunciationProfile(userId: string, attempt: any, phonemeAnalysis: any[] = []) {
+    const weakPhonemes = phonemeAnalysis.slice(0, 5).map((item: any) => ({
       phoneme: item.phoneme,
       score: Math.round((item.confidence || 0) * 100),
       updatedAt: new Date(),
@@ -1064,22 +1130,19 @@ export class PronunciationService {
     return 'en-IN';
   }
 
-  private async updateUserPhonemeProfiles(attempt: any) {
-    const phonemeAnalysis = Array.isArray(attempt.phonemeAnalysis) ? attempt.phonemeAnalysis : [];
+  private async updateUserPhonemeProfiles(attempt: any, phonemeAnalysis: any[] = [], wordAnalysis: any[] = []) {
     if (!phonemeAnalysis.length) {
       return;
     }
 
-    const weakestWords = Array.isArray(attempt.wordAnalysis)
-      ? attempt.wordAnalysis
+    const weakestWords = wordAnalysis
           .filter((item: any) => item.score < 85)
           .slice(0, 5)
           .map((item: any) => ({
             word: item.word,
             score: item.score,
             updatedAt: new Date(),
-          }))
-      : [];
+          }));
       
     const { optimizedPronunciationTracker } = await import('./optimizedPronunciationTracker.js');
     await optimizedPronunciationTracker.trackPhonemes(

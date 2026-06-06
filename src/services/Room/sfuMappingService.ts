@@ -111,6 +111,7 @@ class SFUMappingService {
     return this.assignRoomToSFUServer(roomId);
   }
 
+
   async clearRoomSFUMapping(roomId: string): Promise<void> {
     const key = this.getRoomKey(roomId);
     await redisCache.del(key);

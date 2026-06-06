@@ -7,6 +7,7 @@ declare class WebSocketService {
      * Initialize WebSocket server
      */
     initialize(server: HTTPServer): void;
+    private startMetricsPublisher;
     private setupRedisAdapter;
     /**
      * Setup WebSocket event handlers

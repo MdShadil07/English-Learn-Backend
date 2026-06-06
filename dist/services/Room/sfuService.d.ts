@@ -1,4 +1,6 @@
-import type { Router, RtpCapabilities } from 'mediasoup/types';
+import type { types as mediasoupTypes } from 'mediasoup';
+type Router = mediasoupTypes.Router;
+type RtpCapabilities = mediasoupTypes.RtpCapabilities;
 export declare class SFUService {
     private workers;
     private nextWorkerIndex;

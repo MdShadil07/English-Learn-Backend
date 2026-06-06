@@ -23,6 +23,14 @@ interface UploadBufferParams {
   metadata?: Record<string, string>;
 }
 
+interface UploadFileParams {
+  key: string;
+  filePath: string;
+  contentType: string;
+  cacheControl?: string;
+  metadata?: Record<string, string>;
+}
+
 class ObjectStorageService {
   private readonly provider: StorageProvider;
   private readonly bucket: string;
@@ -147,6 +155,54 @@ class ObjectStorageService {
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
     await fs.writeFile(targetPath, buffer);
     return { key, url: `/api/files/${key.replace(/\\/g, '/')}`, size: buffer.byteLength };
+  }
+
+  async uploadFile({ key, filePath, contentType, cacheControl = '3600', metadata = {} }: UploadFileParams) {
+    const s3Client = await this.getS3Client();
+    const start = Date.now();
+    const stat = await fs.stat(filePath);
+    const fileStream = (await import('fs')).createReadStream(filePath);
+
+    if (this.provider === 's3' && s3Client) {
+      try {
+        const command = new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+          Body: fileStream,
+          ContentType: contentType,
+          CacheControl: cacheControl,
+          Metadata: metadata,
+        });
+        await s3Client.send(command);
+        telemetryService.recordServiceCall('aws-s3', Date.now() - start, false);
+        return { key, url: await this.getPublicUrl(key), size: stat.size };
+      } catch (error) {
+        telemetryService.recordServiceCall('aws-s3', Date.now() - start, true);
+        throw error;
+      }
+    }
+
+    if (this.provider === 'supabase' && this.supabase) {
+      const { error } = await this.supabase.storage.from(this.bucket).upload(key, fileStream as any, {
+        contentType,
+        cacheControl,
+        metadata,
+        upsert: true,
+      });
+      if (error) {
+        telemetryService.recordServiceCall('supabase', Date.now() - start, true);
+        throw new Error(`Object storage upload failed: ${error.message}`);
+      }
+
+      telemetryService.recordServiceCall('supabase', Date.now() - start, false);
+      const { data } = this.supabase.storage.from(this.bucket).getPublicUrl(key);
+      return { key, url: data.publicUrl, size: stat.size };
+    }
+
+    const targetPath = path.join(this.uploadPath, key);
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.copyFile(filePath, targetPath);
+    return { key, url: `/api/files/${key.replace(/\\/g, '/')}`, size: stat.size };
   }
 
   async downloadBuffer(key: string): Promise<Buffer> {

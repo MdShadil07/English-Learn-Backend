@@ -134,37 +134,30 @@ export class SpeechProcessingPipeline {
     // Validate segment timestamps and generate word-level boundaries if missing
     const validatedSegments = this.validateAndEnhanceSegments(transcriptResult.segments, transcriptResult.text);
 
-    const fallbackWords = validatedSegments.flatMap((segment) => {
-      const tokens = segment.text.trim().split(/\s+/).filter(Boolean);
-      if (tokens.length === 0) {
-        return [];
-      }
-
-      const durationMs = Math.max(0, segment.end - segment.start);
-      const totalChars = tokens.reduce((sum, t) => sum + t.length, 0);
-      let currentStart = segment.start;
-
-      return tokens.map((word) => {
-        const wordRatio = totalChars > 0 ? word.length / totalChars : 1 / tokens.length;
-        const wordDuration = durationMs * wordRatio;
-        const wordEnd = currentStart + wordDuration;
-        const result = {
-          word,
-          start: Math.round(currentStart * 1000) / 1000,
-          end: Math.round(wordEnd * 1000) / 1000,
-        };
-        currentStart = wordEnd;
-        return result;
-      });
-    });
-
     const transcriptionWords = Array.isArray(transcriptResult.words) && transcriptResult.words.length > 0
       ? transcriptResult.words.map((word) => ({
           word: word.word,
           start: word.start,
           end: word.end,
         }))
-      : fallbackWords;
+      : validatedSegments.flatMap((segment) => {
+          const tokens = segment.text.trim().split(/\s+/).filter(Boolean);
+          if (tokens.length === 0) return [];
+          const durationMs = Math.max(0, segment.end - segment.start);
+          const totalChars = tokens.reduce((sum, t) => sum + t.length, 0);
+          let currentStart = segment.start;
+          return tokens.map((word) => {
+            const wordRatio = totalChars > 0 ? word.length / totalChars : 1 / tokens.length;
+            const wordEnd = currentStart + (durationMs * wordRatio);
+            const result = {
+              word,
+              start: Math.round(currentStart * 1000) / 1000,
+              end: Math.round(wordEnd * 1000) / 1000,
+            };
+            currentStart = wordEnd;
+            return result;
+          });
+        });
 
     const transcription = {
       text: transcriptResult.text,

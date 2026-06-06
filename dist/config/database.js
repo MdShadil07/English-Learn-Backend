@@ -10,7 +10,6 @@ class DatabaseConnection {
                 console.log('✅ Database already connected');
                 return;
             }
-            console.log('🔄 Connecting to MongoDB...');
             this.connection = await mongoose.connect(MONGODB_URI, {
                 // Connection pooling configuration for scalability
                 // maxPoolSize sizing: API_INSTANCES × CONNECTIONS_PER_INSTANCE
@@ -22,7 +21,7 @@ class DatabaseConnection {
                 minPoolSize: 5, // Minimum number of connections in the connection pool
                 maxIdleTimeMS: 30000, // Close connections after 30 seconds of inactivity
                 serverSelectionTimeoutMS: 5000, // Keep trying to send operations for 5 seconds
-                socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
+                socketTimeoutMS: 15000, // Shortened to 15 seconds to fail/retry fast on reset sockets
                 family: 4, // Use IPv4, skip trying IPv6
                 retryWrites: true,
                 w: 'majority', // Write concern

@@ -44,6 +44,8 @@ import notificationsRoutes from './routes/notifications.routes.js';
 // Import monitoring controller
 import { monitoringController, metricsMiddleware } from './controllers/Monitoring/monitoring.controller.js';
 import subscriptionService from './services/Subscription/subscriptionService.js';
+import { metricsPublisher } from './utils/metricsPublisher.js';
+import { requestMonitoringMiddleware } from './middleware/monitoring.js';
 import { createAIChatConversationPersistenceWorker, shutdownAIChatConversationPersistenceWorker, } from './workers/aiChatConversationPersistenceWorker.js';
 import { shutdownAIChatConversationQueue } from './queues/aiChatConversationQueue.js';
 import { createSpeechAnalysisWorker, shutdownSpeechAnalysisWorker } from './workers/speechAnalysisWorker.js';
@@ -98,6 +100,8 @@ async function initializeServices() {
         else {
             console.log('⚠️ Redis not available, emails, speech analysis queues, and AI chat persistence queue will not start');
         }
+        // Start background metrics publishing
+        metricsPublisher.start();
         console.log('✅ All services initialized successfully');
     }
     catch (error) {
@@ -168,6 +172,8 @@ async function startServer() {
         }
         // Rate limiting
         app.use('/api/', apiRateLimit);
+        // Monitoring middleware for request tracking
+        app.use(requestMonitoringMiddleware);
         // Metrics middleware for load testing
         app.use(metricsMiddleware);
         // Health check endpoint with performance metrics
@@ -223,6 +229,7 @@ async function startServer() {
                         shutdownEmailQueue(),
                         shutdownEmailWorker()
                     ]);
+                    metricsPublisher.stop();
                     console.log('✅ Database, cache, and email queue disconnected');
                 }
                 catch (error) {
@@ -298,4 +305,5 @@ ${process.env.NODE_ENV === 'production' ? `👥 Workers: ${clusterManager.getWor
         process.exit(1);
     }
 }
+// Trigger tsx watch reload
 //# sourceMappingURL=index.js.map

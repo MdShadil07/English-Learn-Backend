@@ -465,11 +465,19 @@ export class ComprehensiveJobScheduler {
      */
     async generateWeeklyStreakReport() {
         try {
+            const totalUsers = await Progress.countDocuments();
             const stats = await Progress.aggregate([
+                {
+                    $match: {
+                        $or: [
+                            { 'streak.current': { $gt: 0 } },
+                            { 'streak.longest': { $gt: 0 } }
+                        ]
+                    }
+                },
                 {
                     $group: {
                         _id: null,
-                        totalUsers: { $sum: 1 },
                         activeStreaks: {
                             $sum: { $cond: [{ $gt: ['$streak.current', 0] }, 1, 0] },
                         },
@@ -478,7 +486,8 @@ export class ComprehensiveJobScheduler {
                     },
                 },
             ]);
-            logger.info(stats[0] || {}, '📊 Weekly streak statistics');
+            const reportStats = stats[0] ? { ...stats[0], totalUsers } : { totalUsers, activeStreaks: 0, averageStreak: 0, longestStreak: 0 };
+            logger.info(reportStats, '📊 Weekly streak statistics');
         }
         catch (error) {
             logger.error({ error }, '❌ Failed to generate weekly streak report');

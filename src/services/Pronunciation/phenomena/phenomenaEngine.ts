@@ -22,10 +22,18 @@ export type PhenomenonResult = {
   difficulty: 'easy' | 'medium' | 'hard';
   drills: Array<{ type: string; instruction: string }>;
   visual?: { key: string; svg?: string; instruction: string };
+  affectedWords?: string[];
 };
 
 function sumPairCounts(subs: Record<string, number>, patterns: string[]) {
   return patterns.reduce((s, p) => s + (subs[p] || 0), 0);
+}
+
+function getWords(items: any[], limit = 3) {
+  const words = [...new Set(items.map(i => i.word).filter(Boolean))];
+  if (words.length === 0) return '';
+  if (words.length <= limit) return ` in "${words.join('", "')}"`;
+  return ` in "${words.slice(0, limit).join('", "')}" and others`;
 }
 
 // Detects phonological phenomena from phoneme-level analysis and phoneme timeline.
@@ -61,6 +69,7 @@ export function detectPhenomena(
         { type: 'cluster-reduction', instruction: 'Slowly practice target clusters (e.g., "school") by isolating the cluster without inserting a vowel: s-k-oo-l.' },
       ],
       visual: { key: 'tongue_retract', svg: visuals.tongue_retract, instruction: 'Keep the tongue body slightly retracted; do not lower to create a vowel between consonants.' },
+      affectedWords: [...new Set(phonemeTimeline.filter((e) => (e.actual === 'AH' || e.actual === 'AX' || e.actual === 'AH0') && e.issueType === 'insertion').map(e => (e as any).word).filter(Boolean))] as string[],
     });
   }
 
@@ -78,6 +87,7 @@ export function detectPhenomena(
         { type: 'cluster_slow_repeat', instruction: 'Repeat clusters slowly and then accelerate: start with s-k, then add vowel: sk, skoo, iskool -> skool.' },
       ],
       visual: { key: 'cluster_maintain', svg: visuals.cluster_maintain, instruction: 'Keep the tongue and lips ready for the consonant cluster; avoid releasing into a vowel.' },
+      affectedWords: [...new Set(phonemeTimeline.filter((e) => e.issueType === 'insertion' && /[AEIOU]/.test(String(e.actual || ''))).map(e => (e as any).word).filter(Boolean))] as string[],
     });
   }
 
@@ -85,34 +95,56 @@ export function detectPhenomena(
   const aspirationPatterns = ['P->PH', 'T->TH', 'K->KH', 'PH->P', 'TH->T', 'KH->K'];
   const aspirationCount = sumPairCounts(pairCount, aspirationPatterns);
   if (aspirationCount >= 1) {
+    const affected = subs.filter(s => aspirationPatterns.includes(`${s.expected || ''}->${s.actual || ''}`));
     results.push({
       id: 'aspiration_mismatch',
       name: 'Aspiration mismatch',
       confidence: Math.min(0.95, 0.3 * aspirationCount + (options?.asrConfidence || 0) * 0.05),
-      evidence: [`Found ${aspirationCount} aspiration substitutions (e.g., P↔PH).`],
+      evidence: [`Found ${aspirationCount} aspiration substitutions (e.g., P↔PH)${getWords(affected)}.`],
       affectedSounds: ['p', 't', 'k', 'aspirated stops'],
       difficulty: 'medium',
       drills: [
         { type: 'aspiration_practice', instruction: 'Practice aspirated vs unaspirated stops: say "pin" vs "spin" and feel the burst of air.' },
       ],
       visual: { key: 'aspiration_burst', svg: visuals.aspiration_burst, instruction: 'Notice the small puff of air for aspirated stops; place a finger in front of your mouth to feel it.' },
+      affectedWords: [...new Set(affected.map(i => i.word).filter(Boolean))] as string[],
     });
   }
 
-  // 4) Final consonant dropping
-  const finalDrops = omissions.filter((o) => o.expected && !/[AEIOU]/.test(o.expected)).length;
+  const finalDropItems = omissions.filter((o) => o.expected && !/[AEIOU]/.test(o.expected.replace(/[0-2]/g, '')));
+  const finalDrops = finalDropItems.length;
   if (finalDrops >= 1) {
     results.push({
       id: 'final_consonant_dropping',
-      name: 'Final consonant dropping',
+      name: 'FINAL_CONSONANT_DROPPING',
       confidence: Math.min(0.9, 0.25 * finalDrops + (options?.asrConfidence || 0) * 0.05),
-      evidence: [`Detected ${finalDrops} omitted final consonants.`],
+      evidence: [`Detected ${finalDrops} omitted final consonants${getWords(finalDropItems)}.`],
       affectedSounds: ['final consonants'],
       difficulty: 'easy',
       drills: [
         { type: 'final_release', instruction: 'Speak target words while holding the final consonant for 1 second: "cat..." then release.' },
       ],
       visual: { key: 'final_release', svg: visuals.final_release, instruction: 'Hold the articulatory closure for the final consonant before releasing.' },
+      affectedWords: [...new Set(finalDropItems.map(i => i.word).filter(Boolean))] as string[],
+    });
+  }
+  
+  // 4.5) TH Substitution
+  const thPairs = ['TH->T', 'TH->D', 'TH->S', 'TH->Z', 'DH->D', 'DH->Z'];
+  const thCount = sumPairCounts(pairCount, thPairs);
+  if (thCount >= 1) {
+    const affected = subs.filter(s => thPairs.includes(`${s.expected || ''}->${s.actual || ''}`));
+    results.push({
+      id: 'th_substitution',
+      name: 'TH_SUBSTITUTION',
+      confidence: Math.min(0.95, 0.3 * thCount + (options?.asrConfidence || 0) * 0.05),
+      evidence: [`Found ${thCount} TH substitutions (e.g., TH->T or DH->D)${getWords(affected)}.`],
+      affectedSounds: ['TH', 'DH'],
+      difficulty: 'medium',
+      drills: [
+        { type: 'th_practice', instruction: 'Place the tip of your tongue between your teeth and blow air to create the TH sound.' },
+      ],
+      affectedWords: [...new Set(affected.map(i => i.word).filter(Boolean))] as string[],
     });
   }
 
@@ -131,6 +163,7 @@ export function detectPhenomena(
         { type: 'stress_marking', instruction: 'Mark sentence-level stress by tapping the beat on stressed syllables and reading aloud.' },
       ],
       visual: { key: 'stress_wave', svg: visuals.stress_wave, instruction: 'Aim for a clear higher pitch and louder intensity on the stressed syllable.' },
+      affectedWords: [...new Set((wordAnalysis || []).filter((w: any) => (w.componentScores?.stressCorrectness || 100) < 75).map(w => w.word).filter(Boolean))],
     });
   }
   if (syllableClips >= 1) {
@@ -152,6 +185,7 @@ export function detectPhenomena(
   const vowelNeutralPairs = Object.entries(pairCount).filter(([k]) => /AE->AH|EH->AH|IH->AH|IY->IH|AA->AH/.test(k));
   if (vowelNeutralPairs.length) {
     const count = vowelNeutralPairs.reduce((s, [, v]) => s + v as any, 0) as number;
+    const affectedVowels = subs.filter(s => /AE->AH|EH->AH|IH->AH|IY->IH|AA->AH/.test(`${s.expected || ''}->${s.actual || ''}`));
     results.push({
       id: 'vowel_neutralization',
       name: 'Vowel neutralization / stretching',
@@ -162,7 +196,8 @@ export function detectPhenomena(
       drills: [
         { type: 'vowel_contrast', instruction: 'Practice minimal pairs that contrast target vowels (e.g., "bit" vs "beat").' },
       ],
-      visual: { key: 'vowel_front_back', svg: visuals.vowel_front_back, instruction: 'Focus on tongue height and front/back position for vowel contrasts.' },
+      visual: { key: 'vowel_space', svg: visuals.vowel_space, instruction: 'Ensure your tongue and jaw are clearly positioned for the target vowel, avoiding the central schwa space.' },
+      affectedWords: [...new Set(affectedVowels.map(i => i.word).filter(Boolean))] as string[],
     });
   }
 

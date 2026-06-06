@@ -90,7 +90,7 @@ export class AnalyticsController {
         try {
             const { userId } = req.params;
             const { days = 7 } = req.query;
-            const progress = await Progress.findOne({ userId });
+            const progress = (await Progress.findOne({ userId }).lean());
             if (!progress) {
                 res.status(404).json({
                     success: false,
@@ -120,7 +120,7 @@ export class AnalyticsController {
         try {
             const { userId } = req.params;
             const { timeRange = 'week' } = req.query;
-            const progress = await Progress.findOne({ userId });
+            const progress = (await Progress.findOne({ userId }).lean());
             if (!progress) {
                 res.status(404).json({
                     success: false,
@@ -158,7 +158,7 @@ export class AnalyticsController {
     async getLevelStats(req, res) {
         try {
             const { userId } = req.params;
-            const progress = await Progress.findOne({ userId });
+            const progress = (await Progress.findOne({ userId }).lean());
             if (!progress) {
                 res.status(404).json({
                     success: false,
@@ -194,7 +194,7 @@ export class AnalyticsController {
     async getSkillsData(req, res) {
         try {
             const { userId } = req.params;
-            const progress = await Progress.findOne({ userId });
+            const progress = (await Progress.findOne({ userId }).lean());
             if (!progress) {
                 res.status(404).json({
                     success: false,
@@ -227,7 +227,7 @@ export class AnalyticsController {
     async getCategoryData(req, res) {
         try {
             const { userId } = req.params;
-            const progress = await Progress.findOne({ userId });
+            const progress = (await Progress.findOne({ userId }).lean());
             if (!progress) {
                 res.status(404).json({
                     success: false,
@@ -416,7 +416,7 @@ export class AnalyticsController {
             }
             await progressOptimizationService.updateAccuracyData(userId, accuracyPayload, { immediate: true });
             // Fetch updated progress
-            const updatedProgress = await Progress.findOne({ userId });
+            const updatedProgress = await Progress.findOne({ userId }).lean();
             res.json({
                 success: true,
                 message: 'Accuracy data updated successfully (cumulative)',

@@ -52,7 +52,12 @@ export interface IPracticeAttempt extends Document {
     stress: number;
     intonation: number;
     clarity: number;
-    [key: string]: number;
+    passageAccuracy?: number;
+    wordAccuracy?: number;
+    phonemeAccuracy?: number;
+    intelligibility?: number;
+    audioQuality?: number;
+    [key: string]: number | undefined;
   };
   severity?: number;
   wordAnalysis: IPracticeAttemptWordAnalysisItem[];
@@ -188,6 +193,11 @@ const practiceAttemptSchema = new Schema<IPracticeAttempt>(
       stress: { type: Number, default: 0 },
       intonation: { type: Number, default: 0 },
       clarity: { type: Number, default: 0 },
+      passageAccuracy: { type: Number, default: 0 },
+      wordAccuracy: { type: Number, default: 0 },
+      phonemeAccuracy: { type: Number, default: 0 },
+      intelligibility: { type: Number, default: 0 },
+      audioQuality: { type: Number, default: 0 },
     },
     wordAnalysis: {
       type: [wordAnalysisSchema],

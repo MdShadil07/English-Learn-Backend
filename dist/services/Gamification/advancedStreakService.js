@@ -275,7 +275,7 @@ export class AdvancedStreakService {
      * Get current streak status
      */
     static async getStreakStatus(userId, tier = 'premium') {
-        const progress = await Progress.findOne({ userId });
+        const progress = await Progress.findOne({ userId }).lean();
         if (!progress) {
             return {
                 current: 0,

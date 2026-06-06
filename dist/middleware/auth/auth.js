@@ -24,14 +24,11 @@ export const verifyToken = (token, secret) => {
 export const authenticate = async (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
-        console.log('🔐 Auth middleware: Authorization header:', authHeader);
         // Check Authorization header first, then query parameter (for SSE)
         let token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
         if (!token && req.query.token) {
             token = req.query.token;
-            console.log('🔐 Auth middleware: Token from query parameter');
         }
-        console.log('🔐 Auth middleware: Extracted token:', token ? 'present' : 'missing');
         if (!token) {
             console.log('❌ Auth middleware: No token provided');
             res.status(401).json({
@@ -41,9 +38,7 @@ export const authenticate = async (req, res, next) => {
             return;
         }
         // Verify token
-        console.log('🔐 Auth middleware: Verifying token...');
         const decoded = await verifyToken(token, authConfig.jwtSecret);
-        console.log('🔐 Auth middleware: Token decoded:', decoded);
         if (decoded.type !== 'access') {
             console.log('❌ Auth middleware: Invalid token type:', decoded.type);
             res.status(401).json({
@@ -53,9 +48,7 @@ export const authenticate = async (req, res, next) => {
             return;
         }
         // Find user
-        console.log('🔐 Auth middleware: Finding user with ID:', decoded.userId);
         const user = await User.findById(decoded.userId).select('-password');
-        console.log('🔐 Auth middleware: User found:', user ? 'yes' : 'no');
         if (!user) {
             console.log('❌ Auth middleware: User not found in database');
             res.status(401).json({
@@ -77,10 +70,6 @@ export const authenticate = async (req, res, next) => {
         }
         // TODO: Check UserProfile.isActive when profile exists
         // For now, assume user is active if they exist in database
-        console.log('✅ Auth middleware: Authentication successful for user:', user.email);
-        // Log googleAuth data for debugging
-        const userObj = user.toObject ? user.toObject() : user;
-        console.log('🔍 Auth middleware - user.googleAuth:', JSON.stringify(userObj.googleAuth, null, 2));
         req.user = user;
         req.token = token;
         next();

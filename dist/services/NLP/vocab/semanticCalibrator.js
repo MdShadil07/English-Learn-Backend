@@ -33,13 +33,7 @@ const VOCAB_EMBEDDINGS_PATH = (process.env.VOCAB_EMBEDDINGS_PATH || '').trim();
 if (VOCAB_EMBEDDINGS_PATH && !existsSync(VOCAB_EMBEDDINGS_PATH)) {
     logger.warn({ path: VOCAB_EMBEDDINGS_PATH }, 'No embedding model found – skipping semantic vocabulary scoring');
 }
-const ENABLED = (() => {
-    const base = readBooleanFlag('ENABLE_VOCAB_EMBEDDINGS', true);
-    if (VOCAB_EMBEDDINGS_PATH && !existsSync(VOCAB_EMBEDDINGS_PATH)) {
-        return false;
-    }
-    return base;
-})();
+const ENABLED = false; // Hardcoded to false to prevent 512MB OOM crash on Render
 const normalizeVector = (vector) => {
     let norm = 0;
     for (const value of vector) {

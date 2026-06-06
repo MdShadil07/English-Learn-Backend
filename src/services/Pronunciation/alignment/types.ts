@@ -82,6 +82,7 @@ export interface PhonemeLevelPronunciationAnalysis {
   taxonomy?: 'substitution' | 'omission' | 'insertion' | 'prosody' | 'fluency';
   startTime?: number;
   endTime?: number;
+  word?: string;
 }
 
 export interface PhonemeTimelineEvent {

@@ -10,7 +10,12 @@ type CounterName =
   | 'analysis.retry_required'
   | 'alignment.failure_rate'
   | 'asr.confidence'
-  | 'asr.retry_frequency';
+  | 'asr.retry_frequency'
+  | 'upload.size.bytes'
+  | 'upload.duration.ms'
+  | 'upload.memory.before.mb'
+  | 'upload.memory.after.mb'
+  | 'upload.memory.peak.mb';
 
 class PronunciationMetricsService {
   private counters = new Map<CounterName, number>();

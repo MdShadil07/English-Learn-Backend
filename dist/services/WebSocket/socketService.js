@@ -13,6 +13,7 @@ import { distributedRoomStateService } from '../Room/distributedRoomStateService
 import { roomCoordinatorService } from '../Room/roomCoordinatorService.js';
 import { roomMetricsService } from '../Metrics/roomMetricsService.js';
 import { presenceService } from '../Presence/presenceService.js';
+import { metricsPublisher } from '../../utils/metricsPublisher.js';
 class WebSocketService {
     io = null;
     redisAdapterClients = null;
@@ -67,7 +68,34 @@ class WebSocketService {
         this.setupRedisAdapter().catch((error) => {
             logSocketError('failed to setup socket redis adapter', error);
         });
+        this.startMetricsPublisher();
         console.log('🚀 WebSocket server initialized');
+    }
+    startMetricsPublisher() {
+        setInterval(async () => {
+            if (!this.io)
+                return;
+            try {
+                const sockets = await this.io.fetchSockets();
+                let roomsCount = 0;
+                let usersInRooms = 0;
+                for (const [roomId, roomSet] of this.io.sockets.adapter.rooms.entries()) {
+                    if (roomId.startsWith('room:')) {
+                        roomsCount++;
+                        usersInRooms += roomSet.size;
+                    }
+                }
+                metricsPublisher.trackServiceState('socket', {
+                    connectedSockets: sockets.length,
+                    connectedUsers: new Set(sockets.map(s => s.data.userId).filter(Boolean)).size,
+                    rooms: roomsCount,
+                    usersInRooms: usersInRooms
+                });
+            }
+            catch (err) {
+                console.error('[SocketService] Error publishing metrics', err);
+            }
+        }, 10000);
     }
     async setupRedisAdapter() {
         if (!this.io)

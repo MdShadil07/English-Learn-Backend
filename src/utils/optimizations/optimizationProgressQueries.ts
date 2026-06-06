@@ -157,7 +157,34 @@ export class OptimizedProgressQueries {
 
       const sortDirection = direction === 'asc' ? 1 : -1;
 
-  const pipeline: PipelineStage[] = [
+      const pipeline: PipelineStage[] = [];
+
+      pipeline.push({
+        $addFields: {
+          metricValue: {
+            $ifNull: [`$${sortField}`, 0],
+          },
+        },
+      });
+
+      // If no tier filter, we can sort, skip, and limit early to avoid massive lookups
+      if (!tier) {
+        pipeline.push({
+          $sort: {
+            metricValue: sortDirection,
+            totalXP: -1,
+            lastActive: -1,
+          },
+        });
+
+        if (offset > 0) {
+          pipeline.push({ $skip: offset });
+        }
+
+        pipeline.push({ $limit: limit });
+      }
+
+      pipeline.push(
         {
           $lookup: {
             from: 'users',
@@ -182,7 +209,34 @@ export class OptimizedProgressQueries {
             path: '$user',
             preserveNullAndEmptyArrays: true,
           },
-        },
+        }
+      );
+
+      if (tier) {
+        pipeline.push({
+          $match: {
+            'user.tier': tier,
+          },
+        });
+
+        // If tier is filtered, we must sort, skip, and limit AFTER the tier match
+        pipeline.push({
+          $sort: {
+            metricValue: sortDirection,
+            totalXP: -1,
+            lastActive: -1,
+          },
+        });
+
+        if (offset > 0) {
+          pipeline.push({ $skip: offset });
+        }
+
+        pipeline.push({ $limit: limit });
+      }
+
+      // Lookup UserProfile ONLY for the final paginated results
+      pipeline.push(
         {
           $lookup: {
             from: 'userprofiles',
@@ -215,38 +269,8 @@ export class OptimizedProgressQueries {
             path: '$userProfile',
             preserveNullAndEmptyArrays: true,
           },
-        },
-      ];
-
-      if (tier) {
-        pipeline.push({
-          $match: {
-            'user.tier': tier,
-          },
-        });
-      }
-
-      pipeline.push({
-        $addFields: {
-          metricValue: {
-            $ifNull: [`$${sortField}`, 0],
-          },
-        },
-      });
-
-      pipeline.push({
-        $sort: {
-          metricValue: sortDirection,
-          totalXP: -1,
-          lastActive: -1,
-        },
-      });
-
-      if (offset > 0) {
-        pipeline.push({ $skip: offset });
-      }
-
-      pipeline.push({ $limit: limit });
+        }
+      );
 
       pipeline.push({
         $project: {

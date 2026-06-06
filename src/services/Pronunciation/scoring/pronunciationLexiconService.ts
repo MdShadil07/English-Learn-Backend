@@ -127,25 +127,25 @@ const tokenizeSentence = (sentence: string) =>
     .filter(Boolean);
 
 export class PronunciationLexiconService {
-  private dictionary = new Map<string, string[][]>();
-  private loaded = false;
-  private loadPromise: Promise<void> | null = null;
+  private static dictionary = new Map<string, string[][]>();
+  private static loaded = false;
+  private static loadPromise: Promise<void> | null = null;
 
   /**
    * Ensures the CMU dictionary is loaded. Safe to call multiple times —
    * only the first call actually reads from disk.
    */
   async ensureLoaded() {
-    if (this.loaded) {
+    if (PronunciationLexiconService.loaded) {
       return;
     }
 
-    if (this.loadPromise) {
-      return this.loadPromise;
+    if (PronunciationLexiconService.loadPromise) {
+      return PronunciationLexiconService.loadPromise;
     }
 
-    this.loadPromise = this._loadDictionary();
-    await this.loadPromise;
+    PronunciationLexiconService.loadPromise = this._loadDictionary();
+    await PronunciationLexiconService.loadPromise;
   }
 
   private async _loadDictionary() {
@@ -164,9 +164,9 @@ export class PronunciationLexiconService {
           const variant = Array.isArray(phonemes) && phonemes.every((item) => typeof item === 'string')
             ? [phonemes as string[]]
             : (phonemes as unknown as string[][]);
-          this.dictionary.set(word, variant);
+          PronunciationLexiconService.dictionary.set(word, variant);
         }
-        console.log(`✅ CMU dictionary loaded: ${this.dictionary.size.toLocaleString()} words from ${jsonPath}`);
+        console.log(`✅ CMU dictionary loaded: ${PronunciationLexiconService.dictionary.size.toLocaleString()} words from ${jsonPath}`);
         break;
       } catch {
         // Try next path
@@ -174,7 +174,7 @@ export class PronunciationLexiconService {
     }
 
     // 2. Fallback: try the plain-text CMU dict format (MFA_DICTIONARY_PATH)
-    if (!this.dictionary.size && process.env.MFA_DICTIONARY_PATH) {
+    if (!PronunciationLexiconService.dictionary.size && process.env.MFA_DICTIONARY_PATH) {
       try {
         const contents = await fs.readFile(process.env.MFA_DICTIONARY_PATH, 'utf8');
         for (const rawLine of contents.split(/\r?\n/)) {
@@ -194,11 +194,11 @@ export class PronunciationLexiconService {
           }
 
           const variant = parts.slice(1).map((p) => p.toUpperCase());
-          const existing = this.dictionary.get(entryWord) || [];
+          const existing = PronunciationLexiconService.dictionary.get(entryWord) || [];
           existing.push(variant);
-          this.dictionary.set(entryWord, existing);
+          PronunciationLexiconService.dictionary.set(entryWord, existing);
         }
-        console.log(`✅ CMU dictionary loaded from MFA_DICTIONARY_PATH: ${this.dictionary.size.toLocaleString()} words`);
+        console.log(`✅ CMU dictionary loaded from MFA_DICTIONARY_PATH: ${PronunciationLexiconService.dictionary.size.toLocaleString()} words`);
       } catch (err) {
         console.warn(`⚠️ Failed to load MFA dictionary from ${process.env.MFA_DICTIONARY_PATH}:`, err);
       }
@@ -206,12 +206,12 @@ export class PronunciationLexiconService {
 
     // 3. Add Indian English supplement words
     for (const [word, phonemes] of Object.entries(INDIAN_ENGLISH_SUPPLEMENT)) {
-      const existing = this.dictionary.get(word) || [];
+      const existing = PronunciationLexiconService.dictionary.get(word) || [];
       existing.push(phonemes);
-      this.dictionary.set(word, existing);
+      PronunciationLexiconService.dictionary.set(word, existing);
     }
 
-    if (!this.dictionary.size) {
+    if (!PronunciationLexiconService.dictionary.size) {
       console.error(
         '❌ CRITICAL: CMU dictionary could not be loaded from any source. ' +
         'Pronunciation scoring will use G2P fallback which is less accurate. ' +
@@ -219,12 +219,12 @@ export class PronunciationLexiconService {
       );
     }
 
-    this.loaded = true;
-    this.loadPromise = null;
+    PronunciationLexiconService.loaded = true;
+    PronunciationLexiconService.loadPromise = null;
   }
 
   get wordCount() {
-    return this.dictionary.size;
+    return PronunciationLexiconService.dictionary.size;
   }
 
   async getExpectedWordData(
@@ -233,7 +233,7 @@ export class PronunciationLexiconService {
   ): Promise<ExpectedWordPhonemeData> {
     await this.ensureLoaded();
     const normalized = normalizeWord(word);
-    const candidates = this.dictionary.get(normalized);
+    const candidates = PronunciationLexiconService.dictionary.get(normalized);
 
     const selectedPhonemes = candidates && candidates.length > 0
       ? this.choosePronunciationVariant(normalized, candidates, options)

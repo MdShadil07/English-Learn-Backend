@@ -2,10 +2,13 @@ import { Router } from 'express';
 import { authenticate } from '../../middleware/auth/auth.js';
 import { pronunciationController } from '../../controllers/Pronunciation/pronunciation.controller.js';
 import multer from 'multer';
+import os from 'os';
 
 const router = Router();
 const chunkUpload = multer({
-  storage: multer.memoryStorage(),
+  storage: multer.diskStorage({
+    destination: os.tmpdir()
+  }),
   limits: {
     fileSize: 2 * 1024 * 1024,
     files: 1,

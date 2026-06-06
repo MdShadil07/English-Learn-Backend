@@ -1,6 +1,7 @@
 import * as mediasoup from 'mediasoup';
 import * as os from 'os';
 import { mediasoupConfig } from '../../config/mediasoup.js';
+import { metricsPublisher } from '../../utils/metricsPublisher.js';
 export class SFUService {
     workers = [];
     nextWorkerIndex = 0;
@@ -20,6 +21,22 @@ export class SFUService {
             const wasOverloaded = this.isOverloaded;
             // Overload threshold: 85% CPU load
             this.isOverloaded = loadPercentage > 0.85;
+            let routers = 0, transports = 0, producers = 0, consumers = 0;
+            this.rooms.forEach(room => {
+                routers++;
+                transports += room.transports.size;
+                producers += room.producers.size;
+                consumers += room.consumers.size;
+            });
+            metricsPublisher.trackServiceState('mediasoup', {
+                workers: this.workers.length,
+                routers,
+                rooms: this.rooms.size,
+                participants: Array.from(this.rooms.values()).reduce((acc, r) => acc + r.participantTransports.size, 0),
+                transports,
+                producers,
+                consumers
+            });
             if (this.isOverloaded && !wasOverloaded) {
                 console.warn('⚠️ SFU Node overloaded. Enabling graceful degradation (audio-only mode).');
                 this.enableGracefulDegradation();

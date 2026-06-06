@@ -227,18 +227,18 @@ export class RoomService {
     const userObjectId = new Types.ObjectId(userId);
     
     // Find all rooms this user is a participant of
-    const userParticipantRecords = await RoomParticipantModel.find({ userId: userObjectId }).select('roomId');
+    const userParticipantRecords = await RoomParticipantModel.find({ userId: userObjectId }).select('roomId').lean();
     const roomIds = userParticipantRecords.map(p => p.roomId);
     
     const rooms = await Room.find({
       $or: [{ hostId: userObjectId }, { roomId: { $in: roomIds } }],
       status: 'active'
-    }).sort({ createdAt: -1 });
+    }).sort({ createdAt: -1 }).lean();
     return await Promise.all(rooms.map(room => this.formatRoomDetails(room, userId)));
   }
 
   async getActiveRooms(): Promise<RoomDetails[]> {
-    const rooms = await Room.find({ status: 'active', isPrivate: false }).sort({ createdAt: -1 });
+    const rooms = await Room.find({ status: 'active', isPrivate: false }).sort({ createdAt: -1 }).lean();
     return await Promise.all(rooms.map(room => this.formatRoomDetails(room)));
   }
 
@@ -285,14 +285,14 @@ export class RoomService {
    * roomCode is only exposed to the host (privacy guarantee).
    */
   private async formatRoomDetails(room: any, requestingUserId?: string): Promise<RoomDetails> {
-    const participantRecords = await RoomParticipantModel.find({ roomId: room.roomId }).sort({ joinedAt: 1 });
+    const participantRecords = await RoomParticipantModel.find({ roomId: room.roomId }).sort({ joinedAt: 1 }).lean();
     const participantIdsStr = participantRecords.map(p => p.userId.toString());
     const hostIdStr = room.hostId.toString();
     const allUserIdsStr = [...new Set([...participantIdsStr, hostIdStr])];
     const allUserIds = allUserIdsStr.map(id => new Types.ObjectId(id));
     
-    const users = await User.find({ _id: { $in: allUserIds } }).select('_id username firstName lastName');
-    const profiles = await UserProfile.find({ userId: { $in: allUserIds } }).select('userId avatar_url');
+    const users = await User.find({ _id: { $in: allUserIds } }).select('_id username firstName lastName').lean();
+    const profiles = await UserProfile.find({ userId: { $in: allUserIds } }).select('userId avatar_url').lean();
 
     const userMap = new Map();
     const profileMap = new Map();
@@ -318,8 +318,8 @@ export class RoomService {
     let blockedUsersList: RoomParticipant[] = [];
     if (isHost && room.blockedUsers?.length > 0) {
       const bIds = room.blockedUsers.map((id: Types.ObjectId) => id);
-      const bUsers = await User.find({ _id: { $in: bIds } }).select('_id username firstName lastName');
-      const bProfiles = await UserProfile.find({ userId: { $in: bIds } }).select('userId avatar_url');
+      const bUsers = await User.find({ _id: { $in: bIds } }).select('_id username firstName lastName').lean();
+      const bProfiles = await UserProfile.find({ userId: { $in: bIds } }).select('userId avatar_url').lean();
       
       const bUserMap = new Map();
       const bProfileMap = new Map();

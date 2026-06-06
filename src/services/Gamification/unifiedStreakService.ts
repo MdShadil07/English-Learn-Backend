@@ -542,7 +542,7 @@ class UnifiedStreakService {
     userId: string | Types.ObjectId,
     tier: 'free' | 'pro' | 'premium'
   ): Promise<StreakStatusResponse> {
-    const progress = await Progress.findOne({ userId });
+    const progress = await Progress.findOne({ userId }).lean();
     
     if (!progress) {
       return {

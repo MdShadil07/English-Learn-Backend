@@ -110,73 +110,7 @@ export class OptimizedProgressQueries {
                 return JSON.parse(cached);
             }
             const sortDirection = direction === 'asc' ? 1 : -1;
-            const pipeline = [
-                {
-                    $lookup: {
-                        from: 'users',
-                        localField: 'userId',
-                        foreignField: '_id',
-                        as: 'user',
-                        pipeline: [
-                            {
-                                $project: {
-                                    firstName: 1,
-                                    lastName: 1,
-                                    username: 1,
-                                    tier: 1,
-                                    createdAt: 1,
-                                },
-                            },
-                        ],
-                    },
-                },
-                {
-                    $unwind: {
-                        path: '$user',
-                        preserveNullAndEmptyArrays: true,
-                    },
-                },
-                {
-                    $lookup: {
-                        from: 'userprofiles',
-                        localField: 'userId',
-                        foreignField: 'userId',
-                        as: 'userProfile',
-                        pipeline: [
-                            {
-                                $project: {
-                                    avatar_url: 1,
-                                    avatar: 1,
-                                    avatarUrl: 1,
-                                    profileImage: 1,
-                                    profile_image: 1,
-                                    image: 1,
-                                    imageUrl: 1,
-                                    country: 1,
-                                    location: 1,
-                                    displayName: 1,
-                                    username: 1,
-                                    tier: 1,
-                                    userId: 1,
-                                },
-                            },
-                        ],
-                    },
-                },
-                {
-                    $unwind: {
-                        path: '$userProfile',
-                        preserveNullAndEmptyArrays: true,
-                    },
-                },
-            ];
-            if (tier) {
-                pipeline.push({
-                    $match: {
-                        'user.tier': tier,
-                    },
-                });
-            }
+            const pipeline = [];
             pipeline.push({
                 $addFields: {
                     metricValue: {
@@ -184,17 +118,96 @@ export class OptimizedProgressQueries {
                     },
                 },
             });
+            // If no tier filter, we can sort, skip, and limit early to avoid massive lookups
+            if (!tier) {
+                pipeline.push({
+                    $sort: {
+                        metricValue: sortDirection,
+                        totalXP: -1,
+                        lastActive: -1,
+                    },
+                });
+                if (offset > 0) {
+                    pipeline.push({ $skip: offset });
+                }
+                pipeline.push({ $limit: limit });
+            }
             pipeline.push({
-                $sort: {
-                    metricValue: sortDirection,
-                    totalXP: -1,
-                    lastActive: -1,
+                $lookup: {
+                    from: 'users',
+                    localField: 'userId',
+                    foreignField: '_id',
+                    as: 'user',
+                    pipeline: [
+                        {
+                            $project: {
+                                firstName: 1,
+                                lastName: 1,
+                                username: 1,
+                                tier: 1,
+                                createdAt: 1,
+                            },
+                        },
+                    ],
+                },
+            }, {
+                $unwind: {
+                    path: '$user',
+                    preserveNullAndEmptyArrays: true,
                 },
             });
-            if (offset > 0) {
-                pipeline.push({ $skip: offset });
+            if (tier) {
+                pipeline.push({
+                    $match: {
+                        'user.tier': tier,
+                    },
+                });
+                // If tier is filtered, we must sort, skip, and limit AFTER the tier match
+                pipeline.push({
+                    $sort: {
+                        metricValue: sortDirection,
+                        totalXP: -1,
+                        lastActive: -1,
+                    },
+                });
+                if (offset > 0) {
+                    pipeline.push({ $skip: offset });
+                }
+                pipeline.push({ $limit: limit });
             }
-            pipeline.push({ $limit: limit });
+            // Lookup UserProfile ONLY for the final paginated results
+            pipeline.push({
+                $lookup: {
+                    from: 'userprofiles',
+                    localField: 'userId',
+                    foreignField: 'userId',
+                    as: 'userProfile',
+                    pipeline: [
+                        {
+                            $project: {
+                                avatar_url: 1,
+                                avatar: 1,
+                                avatarUrl: 1,
+                                profileImage: 1,
+                                profile_image: 1,
+                                image: 1,
+                                imageUrl: 1,
+                                country: 1,
+                                location: 1,
+                                displayName: 1,
+                                username: 1,
+                                tier: 1,
+                                userId: 1,
+                            },
+                        },
+                    ],
+                },
+            }, {
+                $unwind: {
+                    path: '$userProfile',
+                    preserveNullAndEmptyArrays: true,
+                },
+            });
             pipeline.push({
                 $project: {
                     _id: 0,

@@ -391,7 +391,7 @@ export class AdvancedStreakService {
     userId: string | Types.ObjectId,
     tier: 'free' | 'pro' | 'premium' = 'premium'
   ): Promise<StreakStatusResponse> {
-    const progress = await Progress.findOne({ userId });
+    const progress = await Progress.findOne({ userId }).lean();
     
     if (!progress) {
       return {

@@ -1,4 +1,3 @@
-import { existsSync } from 'fs';
 import { logger } from '../../../utils/calculators/core/logger.js';
 import {
   alignWordSequences,
@@ -6,9 +5,6 @@ import {
   tokenizeForAlignment,
   normalizeAlignmentWord,
 } from '../alignment/wordSequenceAligner.js';
-
-type EmbeddingVector = number[];
-type FeatureExtractor = (input: string) => Promise<unknown>;
 
 export interface SemanticRelevanceInput {
   expectedTranscript: string;
@@ -32,104 +28,13 @@ export interface SemanticRelevanceResult {
   usedEmbeddings: boolean;
 }
 
-const EMBEDDING_MODEL_ID = process.env.PRONUNCIATION_SEMANTIC_MODEL_ID?.trim() || 'Xenova/all-MiniLM-L6-v2';
-const ENABLED = false; // Hardcoded to false to prevent 512MB OOM crash on Render
-
-const SEMANTIC_EMBEDDINGS_PATH = (process.env.PRONUNCIATION_SEMANTIC_EMBEDDINGS_PATH || '').trim();
-
-if (SEMANTIC_EMBEDDINGS_PATH && !existsSync(SEMANTIC_EMBEDDINGS_PATH)) {
-  logger.warn({ path: SEMANTIC_EMBEDDINGS_PATH }, 'Pronunciation semantic embedding path not found; falling back to heuristic relevance checks');
-}
-
-const normalizeVector = (vector: EmbeddingVector) => {
-  let norm = 0;
-  for (const value of vector) {
-    norm += value * value;
-  }
-  if (!Number.isFinite(norm) || norm <= 0) {
-    return vector.map(() => 0);
-  }
-  const magnitude = Math.sqrt(norm);
-  return vector.map((value) => value / magnitude);
-};
-
-const cosineSimilarity = (a: EmbeddingVector, b: EmbeddingVector) => {
-  if (a.length === 0 || b.length === 0) {
-    return 0;
-  }
-
-  const length = Math.min(a.length, b.length);
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-
-  for (let index = 0; index < length; index += 1) {
-    const av = a[index];
-    const bv = b[index];
-    dot += av * bv;
-    normA += av * av;
-    normB += bv * bv;
-  }
-
-  if (!Number.isFinite(dot) || !Number.isFinite(normA) || !Number.isFinite(normB)) {
-    return 0;
-  }
-
-  const magnitudeA = Math.sqrt(normA);
-  const magnitudeB = Math.sqrt(normB);
-  if (magnitudeA === 0 || magnitudeB === 0) {
-    return 0;
-  }
-
-  return dot / (magnitudeA * magnitudeB);
-};
-
-const toVector = (payload: unknown): EmbeddingVector | null => {
-  if (!payload) {
-    return null;
-  }
-
-  if (Array.isArray(payload)) {
-    if (payload.length === 0) {
-      return null;
-    }
-
-    const first = payload[0];
-    if (Array.isArray(first)) {
-      return normalizeVector(first.map((value) => Number(value) || 0));
-    }
-
-    if (typeof first === 'number') {
-      return normalizeVector((payload as number[]).map((value) => Number(value) || 0));
-    }
-  }
-
-  if (payload instanceof Float32Array) {
-    return normalizeVector(Array.from(payload));
-  }
-
-  if (typeof payload === 'object' && payload !== null && 'data' in payload) {
-    const data = (payload as { data: unknown }).data;
-    if (data instanceof Float32Array) {
-      return normalizeVector(Array.from(data));
-    }
-    if (Array.isArray(data)) {
-      return normalizeVector(data.map((value) => Number(value) || 0));
-    }
-  }
-
-  return null;
-};
+const ENABLED = process.env.ENABLE_PRONUNCIATION_SEMANTIC_GATE === 'true';
 
 const normalizeTranscript = (text: string) => text.trim().replace(/\s+/g, ' ');
 const tokenizeTranscript = (text: string) => tokenizeForAlignment(text).map((token) => normalizeAlignmentWord(token)).filter(Boolean);
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 
 class SemanticRelevanceService {
-  private extractorPromise: Promise<FeatureExtractor> | null = null;
-  private initializationError: Error | null = null;
-  private readonly embeddingCache = new Map<string, EmbeddingVector>();
-
   async evaluate(input: SemanticRelevanceInput): Promise<SemanticRelevanceResult> {
     const expectedTranscript = normalizeTranscript(input.expectedTranscript);
     const recognizedTranscript = normalizeTranscript(input.recognizedTranscript);
@@ -157,16 +62,27 @@ class SemanticRelevanceService {
     const overlap = this.calculateLexicalOverlap(expectedWords, recognizedWords);
     const alignmentSimilarity = calculateWordAlignmentConfidence(alignWordSequences(expectedWords, recognizedWords));
 
-    const extractor = await this.ensureExtractor();
     let semanticSimilarity = 0;
     let usedEmbeddings = false;
 
-    if (extractor) {
-      const expectedVector = await this.embedText(expectedTranscript, extractor);
-      const recognizedVector = await this.embedText(recognizedTranscript, extractor);
-      if (expectedVector && recognizedVector) {
-        semanticSimilarity = clamp01((cosineSimilarity(expectedVector, recognizedVector) + 1) / 2);
-        usedEmbeddings = true;
+    if (ENABLED) {
+      try {
+        const workerUrl = process.env.SPEECH_WORKER_URL || 'http://localhost:8001';
+        const response = await fetch(`${workerUrl}/semantic/similarity`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text1: expectedTranscript, text2: recognizedTranscript })
+        });
+        
+        if (response.ok) {
+          const data = await response.json() as { similarity: number };
+          semanticSimilarity = data.similarity;
+          usedEmbeddings = true;
+        } else {
+          logger.warn({ status: response.status }, 'Semantic similarity API failed');
+        }
+      } catch (error) {
+        logger.error({ error }, 'Failed to call semantic similarity API');
       }
     }
 
@@ -206,61 +122,6 @@ class SemanticRelevanceService {
       recommendation: this.describeRecommendation(classification),
       usedEmbeddings,
     };
-  }
-
-  private async ensureExtractor(): Promise<FeatureExtractor | null> {
-    if (!ENABLED || this.initializationError) {
-      return null;
-    }
-
-    if (!this.extractorPromise) {
-      this.extractorPromise = (async () => {
-        const transformersModule = await import('@xenova/transformers');
-        const featureExtractor = await (transformersModule as any).pipeline('feature-extraction', EMBEDDING_MODEL_ID, {
-          quantized: true,
-          pooling: 'mean',
-          normalize: true,
-        });
-        return featureExtractor as FeatureExtractor;
-      })().catch((error) => {
-        const normalized = error instanceof Error ? error : new Error(String(error));
-        this.initializationError = normalized;
-        this.extractorPromise = null;
-        logger.warn({ error: normalized }, 'Failed to initialize pronunciation semantic embedding model');
-        throw normalized;
-      });
-    }
-
-    try {
-      return await this.extractorPromise;
-    } catch (error) {
-      const normalized = error instanceof Error ? error : new Error(String(error));
-      if (!this.initializationError) {
-        this.initializationError = normalized;
-      }
-      return null;
-    }
-  }
-
-  private async embedText(text: string, extractor: FeatureExtractor): Promise<EmbeddingVector | null> {
-    const cacheKey = text.toLowerCase();
-    const cached = this.embeddingCache.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
-
-    try {
-      const raw = await extractor(text);
-      const vector = toVector(raw);
-      if (!vector) {
-        return null;
-      }
-      this.embeddingCache.set(cacheKey, vector);
-      return vector;
-    } catch (error) {
-      logger.debug({ error }, 'Failed to embed pronunciation text for semantic gating');
-      return null;
-    }
   }
 
   private heuristicSemanticSimilarity(expectedWords: string[], recognizedWords: string[], overlap: number, alignmentSimilarity: number) {

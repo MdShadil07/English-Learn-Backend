@@ -359,10 +359,10 @@ export class ProfileController {
                     User.findOne({
                         username: desiredUsername,
                         _id: { $ne: userId }
-                    }).select('_id username'),
+                    }).select('_id username').lean(),
                     UserProfile.findOne({
                         userId: { $ne: userId }
-                    }).select('userId')
+                    }).select('userId').lean()
                 ]);
                 if (existingUser) {
                     return res.status(409).json({
@@ -378,7 +378,7 @@ export class ProfileController {
                 const existingUser = await User.findOne({
                     email: desiredEmail,
                     _id: { $ne: userId }
-                }).select('_id email');
+                }).select('_id email').lean();
                 if (existingUser) {
                     return res.status(409).json({
                         success: false,
@@ -462,7 +462,7 @@ export class ProfileController {
                     const existingPhoneProfile = await UserProfile.findOne({
                         'personalInfo.phone': personalInfo.phone,
                         userId: { $ne: userId }
-                    }).select('_id');
+                    }).select('_id').lean();
                     if (existingPhoneProfile) {
                         return res.status(409).json({
                             success: false,

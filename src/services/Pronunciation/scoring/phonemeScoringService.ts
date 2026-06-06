@@ -113,7 +113,7 @@ export class PhonemeScoringService {
         wordIndex: pair.targetIndex ?? undefined,
         targetWord: pair.targetWord,
       });
-      const expectedPhonemes = expectedWord.expectedPhonemes;
+      let expectedPhonemes = expectedWord.expectedPhonemes;
 
       if (!alignedWord) {
         const componentScores = {
@@ -182,6 +182,10 @@ export class PhonemeScoringService {
         }
       }
 
+      // FULLY STRIP STRESS MARKERS BEFORE ANY COMPARISON OR STORAGE
+      expectedPhonemes = expectedPhonemes.map(p => p.replace(/[0-2]/g, ''));
+      actualPhonemes = actualPhonemes.map(p => p.replace(/[0-2]/g, ''));
+
       const comparison = this.comparePhonemeSequences(expectedPhonemes, actualPhonemes);
       const componentScores = this.calculateComponentScores(expectedPhonemes, actualPhonemes, comparison, alignedWord, expectedWord.expectedSyllables, expectedWord.expectedStress);
       let score = this.combineComponentScores(componentScores);
@@ -195,7 +199,7 @@ export class PhonemeScoringService {
          score = Math.round(score * Math.max(0.6, pair.confidence));
       }
       
-      const severity = score >= 90 ? 0 : score >= 75 ? 1 : 2;
+      const severity = score >= 90 ? 0 : score >= 75 ? 1 : score >= 60 ? 2 : 3;
       const issueType = score >= 90 ? 'stable' : this.resolvePrimaryIssueType(comparison.events);
 
       if (this.debugLogsEnabled) {
@@ -252,6 +256,7 @@ export class PhonemeScoringService {
           taxonomy: timeline.taxonomy,
           startTime: timeline.startTime,
           endTime: timeline.endTime,
+          word: targetWord,
         });
       });
     }
@@ -412,20 +417,24 @@ export class PhonemeScoringService {
   }
 
   private comparePhonemeSequences(expected: string[], actual: string[]) {
-    const matrix = Array.from({ length: expected.length + 1 }, () =>
-      Array.from({ length: actual.length + 1 }, () => 0)
+    // Stress normalization is already handled before passing to this function.
+    const normalizedExpected = expected;
+    const normalizedActual = actual;
+
+    const matrix = Array.from({ length: normalizedExpected.length + 1 }, () =>
+      Array.from({ length: normalizedActual.length + 1 }, () => 0)
     );
 
-    for (let i = 0; i <= expected.length; i += 1) {
+    for (let i = 0; i <= normalizedExpected.length; i += 1) {
       matrix[i][0] = i;
     }
-    for (let j = 0; j <= actual.length; j += 1) {
+    for (let j = 0; j <= normalizedActual.length; j += 1) {
       matrix[0][j] = j;
     }
 
-    for (let i = 1; i <= expected.length; i += 1) {
-      for (let j = 1; j <= actual.length; j += 1) {
-        const cost = expected[i - 1] === actual[j - 1] ? 0 : this.phonemeSubstitutionCost(expected[i - 1], actual[j - 1]);
+    for (let i = 1; i <= normalizedExpected.length; i += 1) {
+      for (let j = 1; j <= normalizedActual.length; j += 1) {
+        const cost = normalizedExpected[i - 1] === normalizedActual[j - 1] ? 0 : this.phonemeSubstitutionCost(normalizedExpected[i - 1], normalizedActual[j - 1]);
         matrix[i][j] = Math.min(
           matrix[i - 1][j] + 1,
           matrix[i][j - 1] + 1,
@@ -439,7 +448,7 @@ export class PhonemeScoringService {
     let j = actual.length;
 
     while (i > 0 || j > 0) {
-      if (i > 0 && j > 0 && matrix[i][j] === matrix[i - 1][j - 1] && expected[i - 1] === actual[j - 1]) {
+      if (i > 0 && j > 0 && matrix[i][j] === matrix[i - 1][j - 1] && normalizedExpected[i - 1] === normalizedActual[j - 1]) {
         events.unshift({ type: 'match', expected: expected[i - 1], actual: actual[j - 1] });
         i -= 1;
         j -= 1;
@@ -533,6 +542,36 @@ export class PhonemeScoringService {
 
     // Integrate acoustic confidence directly into phonemeCorrectness
     let baseCorrectness = Math.max(0, 100 - ((comparison.distance / Math.max(1, expected.length, actual.length)) * 100));
+    
+    // Phase 3: Severity Engine
+    let severityPenalty = 0;
+    
+    comparison.events.forEach(event => {
+      if (event.type === 'deletion') {
+        const isV = event.expected && isVowel(event.expected.replace(/[0-2]/g, ''));
+        if (!isV) {
+          // Final Consonant Dropping or Plural missing
+          severityPenalty += 5; // Low Severity
+        } else {
+          severityPenalty += 25; // High severity (missing syllable entirely)
+        }
+      } else if (event.type === 'substitution' && event.expected && event.actual) {
+        const expectedVowel = isVowel(event.expected.replace(/[0-2]/g, ''));
+        const actualVowel = isVowel(event.actual.replace(/[0-2]/g, ''));
+        
+        if (expectedVowel !== actualVowel) {
+           severityPenalty += 40; // Critical: Consonant <-> Vowel shift!
+        } else if (expectedVowel && actualVowel) {
+           severityPenalty += 25; // High: Vowel shift (ship -> sheep)
+        } else {
+           severityPenalty += 15; // Medium: Consonant shift (think -> tink)
+        }
+      } else if (event.type === 'insertion') {
+         severityPenalty += 5; // Low severity
+      }
+    });
+
+    baseCorrectness = Math.max(0, 100 - severityPenalty);
     
     // If exact string match (like synthetic fallback), we rely heavily on acoustic confidence
     if (comparison.distance === 0 && avgAcousticConfidence < 1.0) {

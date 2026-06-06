@@ -112,7 +112,7 @@ export class AnalyticsController {
       const { userId } = req.params;
       const { days = 7 } = req.query;
       
-      const progress = await Progress.findOne({ userId });
+      const progress = (await Progress.findOne({ userId }).lean()) as unknown as IProgress;
       
       if (!progress) {
         res.status(404).json({
@@ -146,7 +146,7 @@ export class AnalyticsController {
       const { userId } = req.params;
       const { timeRange = 'week' } = req.query;
       
-      const progress = await Progress.findOne({ userId });
+      const progress = (await Progress.findOne({ userId }).lean()) as unknown as IProgress;
       
       if (!progress) {
         res.status(404).json({
@@ -188,7 +188,7 @@ export class AnalyticsController {
     try {
       const { userId } = req.params;
       
-      const progress = await Progress.findOne({ userId });
+      const progress = (await Progress.findOne({ userId }).lean()) as unknown as IProgress;
       
       if (!progress) {
         res.status(404).json({
@@ -228,7 +228,7 @@ export class AnalyticsController {
     try {
       const { userId } = req.params;
       
-      const progress = await Progress.findOne({ userId });
+      const progress = (await Progress.findOne({ userId }).lean()) as unknown as IProgress;
       
       if (!progress) {
         res.status(404).json({
@@ -265,7 +265,7 @@ export class AnalyticsController {
     try {
       const { userId } = req.params;
       
-      const progress = await Progress.findOne({ userId });
+      const progress = (await Progress.findOne({ userId }).lean()) as unknown as IProgress;
       
       if (!progress) {
         res.status(404).json({
@@ -483,7 +483,7 @@ export class AnalyticsController {
       await progressOptimizationService.updateAccuracyData(userId, accuracyPayload, { immediate: true });
       
       // Fetch updated progress
-      const updatedProgress = await Progress.findOne({ userId });
+      const updatedProgress = await Progress.findOne({ userId }).lean();
       
       res.json({
         success: true,

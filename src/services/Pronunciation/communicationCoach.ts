@@ -1,5 +1,7 @@
 import SpeechProfile from '../../models/SpeechProfile.js';
+
 import { telemetryService } from '../telemetryService.js';
+import axios from 'axios';
 
 type CoachLlmInput = {
   transcript: string;
@@ -9,16 +11,15 @@ type CoachLlmInput = {
     avgPauseMs: number;
     confidence: number;
   };
+  pronunciationIssues?: string[];
 };
 
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 const GEMINI_TIMEOUT_MS = Number(process.env.COACH_GEMINI_TIMEOUT_MS || 7000);
 const COACH_MODELS = [
   process.env.COACH_GEMINI_MODEL || 'gemini-2.0-flash',
-  'gemini-1.5-flash-8b',
   'gemini-1.5-flash',
-  'gemini-1.5-pro',
-  'gemini-1.0-pro'
+  'gemini-1.5-pro'
 ].filter((value, index, self) => Boolean(value) && self.indexOf(value) === index);
 
 type CoachGeminiResponse = {
@@ -26,30 +27,32 @@ type CoachGeminiResponse = {
   suggestions: string[];
   focus?: string;
   summary?: string;
+  drillWords?: string[];
 };
 
-async function generateGeminiCoachNarrative(input: CoachLlmInput): Promise<CoachGeminiResponse | null> {
+async function generateGeminiCoachNarrative(input: CoachLlmInput, maxRetries = 3): Promise<CoachGeminiResponse | null> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
+    console.warn('Gemini API key is missing. Skipping coach analysis.');
     return null;
   }
 
   const transcriptSnippet = input.transcript.slice(0, 1200);
   const prompt = [
     'You are a premium English speaking communication coach for adult learners.',
+    'You must be STRICT and directly point out exactly where the user is lacking. No sugarcoating.',
     'Return ONLY valid JSON. No markdown. No code fences. No extra text.',
     'Use exactly this schema:',
-    '{"narrative":string,"suggestions":string[],"focus":string,"summary":string}',
+    '{"narrative":string,"suggestions":string[],"focus":string,"summary":string,"drillWords":string[]}',
     'The response must be specific, practical, and confident.',
-    'Do not be generic. Mention one dominant speaking issue, one positive observation, and one drill recommendation.',
-    'Keep narrative under 75 words.',
+    'Do not be generic. Mention their dominant speaking issues based on the provided metrics and pronunciation issues.',
+    'Keep narrative under 75 words, but ensure it is strict and clear about what they did wrong.',
     'Suggestions must be short, actionable, and no more than 3 items.',
+    'drillWords must be an array of 3 to 5 words that contain similar phonetic patterns to their pronunciation issues, so they can practice them right away.',
     `Transcript: ${transcriptSnippet}`,
     `Metrics: wps=${input.metrics.wps.toFixed(2)}, fillers=${input.metrics.fillerCount}, avgPauseMs=${Math.round(input.metrics.avgPauseMs)}, confidence=${input.metrics.confidence}`,
-  ].join('\n');
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+    input.pronunciationIssues && input.pronunciationIssues.length > 0 ? `Pronunciation Issues Detected by MFA: ${input.pronunciationIssues.join('; ')}` : '',
+  ].filter(Boolean).join('\n');
 
   const requestBody = {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -62,47 +65,29 @@ async function generateGeminiCoachNarrative(input: CoachLlmInput): Promise<Coach
     },
   };
 
-  try {
-    for (const model of COACH_MODELS) {
+  const retryDelayMs = Math.max(250, parseInt(process.env.GEMINI_RETRY_DELAY_MS || '750'));
+
+  for (const model of COACH_MODELS) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       const startTime = Date.now();
       try {
-        const response = await fetch(`${GEMINI_BASE_URL}/models/${model}:generateContent?key=${apiKey}`, {
-          method: 'POST',
+        const url = `${GEMINI_BASE_URL}/models/${model}:generateContent?key=${apiKey}`;
+        const response = await axios.post(url, requestBody, {
           headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify(requestBody),
+          timeout: GEMINI_TIMEOUT_MS,
         });
 
-        if (!response.ok) {
-          telemetryService.recordServiceCall('communication-coach', Date.now() - startTime, true);
-          const errorText = await response.text().catch(() => '');
-          console.warn('Gemini coach request failed', { model, status: response.status, errorText: errorText.slice(0, 200) });
-          continue;
-        }
-
         telemetryService.recordServiceCall('communication-coach', Date.now() - startTime, false);
-        const payload: any = await response.json();
-        const parts = payload?.candidates?.[0]?.content?.parts || [];
-        const text = parts.map((part: any) => typeof part?.text === 'string' ? part.text : '').join('\n').trim();
-
-        if (!text && payload && typeof payload === 'object') {
-          const directNarrative = typeof payload?.narrative === 'string' ? payload.narrative : '';
-          const directSuggestions = Array.isArray(payload?.suggestions) ? payload.suggestions : [];
-          if (directNarrative && directSuggestions.length) {
-            return {
-              narrative: directNarrative.trim().replace(/\s+/g, ' '),
-              suggestions: directSuggestions.filter((item: unknown) => typeof item === 'string').slice(0, 3),
-              focus: typeof payload?.focus === 'string' ? payload.focus.trim() : undefined,
-              summary: typeof payload?.summary === 'string' ? payload.summary.trim() : undefined,
-            };
-          }
-          continue;
+        
+        const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (!text) {
+          throw new Error('Gemini returned an empty response.');
         }
 
         const match = text.match(/\{[\s\S]*\}/);
         const parsed = match ? JSON.parse(match[0]) : null;
         if (!parsed || typeof parsed.narrative !== 'string' || !Array.isArray(parsed.suggestions)) {
-          continue;
+          throw new Error('Failed to parse valid JSON from Gemini response.');
         }
 
         return {
@@ -110,44 +95,45 @@ async function generateGeminiCoachNarrative(input: CoachLlmInput): Promise<Coach
           suggestions: parsed.suggestions.filter((item: unknown) => typeof item === 'string').slice(0, 3),
           focus: typeof parsed.focus === 'string' ? parsed.focus.trim() : undefined,
           summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : undefined,
+          drillWords: Array.isArray(parsed.drillWords) ? parsed.drillWords.filter((w:any) => typeof w === 'string').slice(0, 5) : undefined,
         };
-      } catch (error) {
+      } catch (error: any) {
         telemetryService.recordServiceCall('communication-coach', Date.now() - startTime, true);
-        console.warn('Gemini coach attempt failed', { model, error: error instanceof Error ? error.message : String(error) });
-        continue;
+        
+        const status = error?.response?.status;
+        const isRateLimitOrTimeout = status === 429 || status === 408 || error?.code === 'ECONNABORTED';
+        const willRetry = attempt < maxRetries && isRateLimitOrTimeout;
+        
+        console.warn(`⚠️ Gemini coach request failed [${model}] attempt ${attempt} (${willRetry ? 'retrying' : 'moving to next model/fallback'})`, {
+          status,
+          message: error?.message,
+        });
+
+        if (!willRetry) {
+          break; // Move to the next model in COACH_MODELS if it's a hard error (e.g., 404, 400) or we ran out of retries
+        }
+
+        const backoff = Math.min(4000, retryDelayMs * Math.pow(2, attempt - 1));
+        await new Promise(resolve => setTimeout(resolve, backoff));
       }
     }
-    return null;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  return null;
 }
 
 function buildHeuristicCoachResponse(attempt: any, base: ReturnType<typeof analyzeCommunication>) {
   return {
-    narrative: 'Service is not running or there is some issue.',
-    suggestions: [],
-    focus: 'service-issue',
-    summary: 'Communication coach service is currently unavailable.',
-    source: 'error-fallback',
+    ...base,
+    focus: 'delivery',
+    summary: 'Using heuristic analysis due to coach service unavailability.',
+    source: 'heuristic-fallback',
   };
 }
 
 async function runGeminiCoachWithRetry(input: CoachLlmInput): Promise<CoachGeminiResponse | null> {
-  const first = await generateGeminiCoachNarrative(input);
-  if (first) {
-    return first;
-  }
-
-  const retryInput: CoachLlmInput = {
-    transcript: input.transcript,
-    metrics: {
-      ...input.metrics,
-      confidence: Math.max(0, Math.min(1, input.metrics.confidence + 0.05)),
-    },
-  };
-
-  return generateGeminiCoachNarrative(retryInput);
+  // Now generateGeminiCoachNarrative handles its own robust backoff/retries natively!
+  return generateGeminiCoachNarrative(input, 3);
 }
 
 export function analyzeCommunication(attempt: any) {
@@ -188,9 +174,24 @@ export function analyzeCommunication(attempt: any) {
 
 export async function analyzeCommunicationPremium(attempt: any) {
   const base = analyzeCommunication(attempt);
+  
+  // Extract pronunciation issues from attempt
+  const pronunciationIssues: string[] = [];
+  if (attempt.wordAnalysis && Array.isArray(attempt.wordAnalysis)) {
+    const weakWords = attempt.wordAnalysis.filter((w: any) => w.score < 80);
+    for (const w of weakWords) {
+      const issue = (w.componentScores?.vowelQuality || 100) < 80 ? 'vowels' : (w.componentScores?.consonantCompletion || 100) < 80 ? 'consonants' : 'articulation';
+      pronunciationIssues.push(`Word "${w.word}" (score ${w.score}): poor ${issue}`);
+    }
+  }
+  if (attempt.phonologicalProfile && attempt.phonologicalProfile.dominantPatterns) {
+    pronunciationIssues.push(`Dominant patterns: ${attempt.phonologicalProfile.dominantPatterns.join(', ')}`);
+  }
+
   const llm = await runGeminiCoachWithRetry({
     transcript: attempt.recognizedTranscript || attempt.transcript || '',
     metrics: base.metrics,
+    pronunciationIssues: pronunciationIssues.slice(0, 10),
   });
 
   if (!llm) {
@@ -203,6 +204,7 @@ export async function analyzeCommunicationPremium(attempt: any) {
     suggestions: llm.suggestions.length ? llm.suggestions : base.suggestions,
     focus: llm.focus || 'delivery',
     summary: llm.summary || 'Premium Gemini coach response generated successfully.',
+    drillWords: llm.drillWords || [],
     source: 'gemini-flash',
   };
 }

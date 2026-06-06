@@ -388,7 +388,7 @@ class UnifiedStreakService {
      * Get comprehensive streak status with all details
      */
     async getStreakStatus(userId, tier) {
-        const progress = await Progress.findOne({ userId });
+        const progress = await Progress.findOne({ userId }).lean();
         if (!progress) {
             return {
                 current: 0,

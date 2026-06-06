@@ -1,4 +1,3 @@
-import { UnifiedAccuracyCalculator } from './unifiedAccuracyCalculators.js';
 import type { 
   PronunciationScoringResult, 
   WordLevelPronunciationAnalysis,
@@ -13,7 +12,6 @@ export interface PronunciationAccuracyOptions {
 }
 
 export class PronunciationAccuracyCalculator {
-  private unifiedCalculator = new UnifiedAccuracyCalculator();
 
   /**
    * Evaluates the overall pronunciation accuracy incorporating acoustic signals,
@@ -29,6 +27,11 @@ export class PronunciationAccuracyCalculator {
       stress: number;
       intonation: number;
       clarity: number;
+      passageAccuracy?: number;
+      wordAccuracy?: number;
+      phonemeAccuracy?: number;
+      intelligibility?: number;
+      audioQuality?: number;
       grammar?: number;
       vocabulary?: number;
     };
@@ -42,61 +45,75 @@ export class PronunciationAccuracyCalculator {
       asrConfidence
     });
 
-    // 1. Get Base Metrics
-    let { pronunciation, fluency, stress, intonation, clarity } = baseScores.scores;
-    console.log('[PronunciationAccuracyCalculator] Base Metrics:', baseScores.scores);
-
-    // 2. Adjust scores based on acoustic confidence (ASR)
-    // We heavily penalize clarity if ASR struggles to understand the user
-    const asrPenalty = Math.max(0, 1.0 - asrConfidence);
-    clarity = Math.max(0, clarity - (asrPenalty * 100 * 0.8)); // Up to 80% penalty on clarity
-    pronunciation = Math.max(0, pronunciation - (asrPenalty * 100 * 0.4)); // Up to 40% penalty on overall
-
-    // Ensure we don't completely zero out if the user at least spoke
-    clarity = Math.max(20, Math.round(clarity));
-    pronunciation = Math.max(20, Math.round(pronunciation));
-
-    console.log('[PronunciationAccuracyCalculator] Adjusted Metrics (ASR applied):', {
-      asrPenalty,
-      clarity,
-      pronunciation
-    });
-
-    // 3. Integrate Unified NLP Analysis
-    let grammar: number | undefined;
-    let vocabulary: number | undefined;
-    let nlpErrors: any[] = [];
-
-    try {
-      const nlpAnalysis = await this.unifiedCalculator.analyzeMessage(
-        recognizedTranscript || expectedTranscript,
-        '',
-        {
-          enableNLP: true,
-          userId: options.userId,
-        }
-      );
-      grammar = nlpAnalysis.grammar;
-      vocabulary = nlpAnalysis.vocabulary;
-      if (nlpAnalysis.errors) {
-        nlpErrors = nlpAnalysis.errors;
-      }
-      console.log('[PronunciationAccuracyCalculator] NLP Analysis Result:', { grammar, vocabulary, nlpErrors });
-    } catch (err) {
-      console.warn('NLP integration failed in pronunciation calculator', err);
+    // Extract base metrics
+    let { pronunciation: basePhonemeAccuracy, fluency, stress } = baseScores.scores;
+    
+    // 1. Passage Accuracy (15%)
+    // Simple word-level Jaccard similarity for passage accuracy
+    const expectedWords = expectedTranscript.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/).filter(Boolean);
+    const recognizedWords = recognizedTranscript.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/).filter(Boolean);
+    
+    let matches = 0;
+    const recognizedSet = new Set(recognizedWords);
+    for (const w of expectedWords) {
+      if (recognizedSet.has(w)) matches++;
     }
+    
+    const maxLen = Math.max(expectedWords.length, 1);
+    const passageAccuracy = Math.min(100, Math.round((matches / maxLen) * 100));
+
+    // 2. Word Accuracy (15%)
+    // Calculate average score of words that were not completely omitted or heavily substituted
+    let wordAccTotal = 0;
+    let wordCount = 0;
+    baseScores.wordAnalysis.forEach(word => {
+      wordCount++;
+      // If severity is critical (substitution meaning change), heavily penalize word accuracy
+      if (word.severity === 3) wordAccTotal += word.score * 0.4;
+      else if (word.severity === 2) wordAccTotal += word.score * 0.7;
+      else wordAccTotal += word.score;
+    });
+    const wordAccuracy = wordCount > 0 ? Math.round(wordAccTotal / wordCount) : 0;
+
+    // 3. Phoneme Accuracy (30%)
+    const phonemeAccuracy = Math.round(basePhonemeAccuracy);
+
+    // 4. Intelligibility (15%)
+    // Driven purely by ASR confidence (no accent penalty)
+    const intelligibility = Math.round(asrConfidence * 100);
+
+    // 5. Audio Quality (5%)
+    // Assuming 95 as base good quality, dropping slightly if ASR is extremely low
+    const audioQuality = asrConfidence > 0.4 ? 95 : 70;
+    
+    // 6. Fluency (10%) & Prosody (10%)
+    const prosody = Math.round(stress);
+    fluency = Math.round(fluency);
+
+    // Calculate final composite Pronunciation score
+    const finalPronunciation = Math.round(
+      (0.15 * passageAccuracy) +
+      (0.15 * wordAccuracy) +
+      (0.30 * phonemeAccuracy) +
+      (0.15 * intelligibility) +
+      (0.10 * fluency) +
+      (0.10 * prosody) +
+      (0.05 * audioQuality)
+    );
 
     const finalResult = {
       adjustedScores: {
-        pronunciation,
+        pronunciation: finalPronunciation,
         fluency,
-        stress,
-        intonation,
-        clarity,
-        grammar,
-        vocabulary
-      },
-      nlpErrors
+        stress: prosody,
+        intonation: baseScores.scores.intonation,
+        clarity: intelligibility, // Map clarity to intelligibility for backwards compatibility
+        passageAccuracy,
+        wordAccuracy,
+        phonemeAccuracy,
+        intelligibility,
+        audioQuality
+      }
     };
     console.log('[PronunciationAccuracyCalculator] Final Evaluated Result:', finalResult.adjustedScores);
     return finalResult;

@@ -1,11 +1,17 @@
 import crypto from 'crypto';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import * as os from 'os';
 import { PracticeSession, PronunciationUploadSession } from '../../models/index.js';
 import type { IPronunciationUploadSession } from '../../models/PronunciationUploadSession.js';
 import { objectStorage } from '../Storage/objectStorage.js';
 import { pronunciationMetrics } from './pronunciationMetrics.js';
+import { metricsPublisher } from '../../utils/metricsPublisher.js';
 
 const MAX_AUDIO_SIZE_BYTES = 25 * 1024 * 1024;
 const MAX_CHUNK_SIZE_BYTES = 2 * 1024 * 1024;
+const MAX_CONCURRENT_UPLOADS = parseInt(process.env.MAX_CONCURRENT_UPLOADS || '50', 10);
+let activeUploads = 0;
 
 export interface CreateUploadSessionInput {
   sessionId: string;
@@ -136,48 +142,93 @@ export class AudioUploadService {
   }
 
   async uploadPart(userId: string, uploadId: string, partIndex: number, chunk: Express.Multer.File) {
-    const uploadSession = await this.requireActiveSession(userId, uploadId);
-
-    if (!Number.isInteger(partIndex) || partIndex < 0 || partIndex >= uploadSession.totalChunks) {
-      throw new Error('Invalid part index');
+    if (activeUploads >= MAX_CONCURRENT_UPLOADS) {
+      if (chunk.path) await fs.unlink(chunk.path).catch(() => {});
+      throw new Error('System is currently at maximum upload capacity. Please try again in a few seconds.');
     }
+    
+    activeUploads++;
+    const startMemory = process.memoryUsage();
+    const startMs = Date.now();
 
-    const partKey = `${uploadSession.tempPrefix}/part-${partIndex.toString().padStart(5, '0')}.webm`;
-    await objectStorage.uploadBuffer({
-      key: partKey,
-      buffer: chunk.buffer,
-      contentType: chunk.mimetype || uploadSession.mimeType,
-      metadata: {
-        uploadId: uploadSession._id.toString(),
-        partIndex: String(partIndex),
-      },
-    });
+    try {
+      const uploadSession = await this.requireActiveSession(userId, uploadId);
 
-    const uploadedParts = Array.from(new Set([...(uploadSession.uploadedParts || []), partIndex])).sort((a, b) => a - b);
-    const uploadedBytes = Math.min(
-      uploadSession.sizeBytes,
-      uploadedParts.length * uploadSession.chunkSizeBytes
-    );
-
-    await PronunciationUploadSession.updateOne(
-      { _id: uploadSession._id },
-      {
-        $set: {
-          uploadedParts,
-          uploadedBytes,
-          status: uploadedParts.length === uploadSession.totalChunks ? 'uploading' : 'uploading',
-          lastActivityAt: new Date(),
-        },
+      if (!Number.isInteger(partIndex) || partIndex < 0 || partIndex >= uploadSession.totalChunks) {
+        throw new Error('Invalid part index');
       }
-    );
 
-    return {
-      uploadId,
-      uploadedParts,
-      uploadedBytes,
-      totalChunks: uploadSession.totalChunks,
-      completed: uploadedParts.length === uploadSession.totalChunks,
-    };
+      const partKey = `${uploadSession.tempPrefix}/part-${partIndex.toString().padStart(5, '0')}.webm`;
+      
+      if (chunk.path) {
+        await objectStorage.uploadFile({
+          key: partKey,
+          filePath: chunk.path,
+          contentType: chunk.mimetype || uploadSession.mimeType,
+          metadata: {
+            uploadId: uploadSession._id.toString(),
+            partIndex: String(partIndex),
+          },
+        });
+      } else if (chunk.buffer) {
+        await objectStorage.uploadBuffer({
+          key: partKey,
+          buffer: chunk.buffer,
+          contentType: chunk.mimetype || uploadSession.mimeType,
+          metadata: {
+            uploadId: uploadSession._id.toString(),
+            partIndex: String(partIndex),
+          },
+        });
+      }
+
+      const uploadedParts = Array.from(new Set([...(uploadSession.uploadedParts || []), partIndex])).sort((a, b) => a - b);
+      const uploadedBytes = Math.min(
+        uploadSession.sizeBytes,
+        uploadedParts.length * uploadSession.chunkSizeBytes
+      );
+
+      await PronunciationUploadSession.updateOne(
+        { _id: uploadSession._id },
+        {
+          $set: {
+            uploadedParts,
+            uploadedBytes,
+            status: uploadedParts.length === uploadSession.totalChunks ? 'uploading' : 'uploading',
+            lastActivityAt: new Date(),
+          },
+        }
+      );
+
+      return {
+        uploadId,
+        uploadedParts,
+        uploadedBytes,
+        totalChunks: uploadSession.totalChunks,
+        completed: uploadedParts.length === uploadSession.totalChunks,
+      };
+    } finally {
+      activeUploads--;
+      if (chunk.path) await fs.unlink(chunk.path).catch(() => {});
+      
+      const endMemory = process.memoryUsage();
+      
+      // Local metrics
+      pronunciationMetrics.observe('upload.memory.before.mb', Math.round(startMemory.rss / 1024 / 1024));
+      pronunciationMetrics.observe('upload.memory.after.mb', Math.round(endMemory.rss / 1024 / 1024));
+      pronunciationMetrics.observe('upload.duration.ms', Date.now() - startMs);
+      pronunciationMetrics.increment('upload.size.bytes', chunk.size);
+
+      // Publish to Redis for Admin Dashboard
+      metricsPublisher.trackPronunciation(
+        'upload',
+        Date.now() - startMs,
+        startMemory,
+        endMemory,
+        process.cpuUsage(),
+        process.cpuUsage()
+      );
+    }
   }
 
   async completeUpload(userId: string, uploadId: string) {
@@ -203,25 +254,40 @@ export class AudioUploadService {
         .sort((a, b) => a - b)
         .map((partIndex) => `${uploadSession.tempPrefix}/part-${partIndex.toString().padStart(5, '0')}.webm`);
 
-      const buffers: Buffer[] = [];
-      for (const key of partKeys) {
-        buffers.push(await objectStorage.downloadBuffer(key));
+      const tempFilePath = path.join(os.tmpdir(), `${uploadSession._id}.webm`);
+      const startMemory = process.memoryUsage();
+      const startMs = Date.now();
+      try {
+        // Download and append parts sequentially
+        for (const key of partKeys) {
+          const partBuffer = await objectStorage.downloadBuffer(key);
+          await fs.appendFile(tempFilePath, partBuffer);
+        }
+
+        const uploaded = await objectStorage.uploadFile({
+          key: finalObjectKey,
+          filePath: tempFilePath,
+          contentType: uploadSession.mimeType,
+          metadata: {
+            uploadId: uploadSession._id.toString(),
+            practiceSessionId: uploadSession.practiceSessionId.toString(),
+          },
+        });
+
+        finalAudioUrl = uploaded.url;
+        await objectStorage.deleteKeys(partKeys);
+      } finally {
+        await fs.unlink(tempFilePath).catch(() => {});
+        const endMemory = process.memoryUsage();
+        metricsPublisher.trackPronunciation(
+          'assembly',
+          Date.now() - startMs,
+          startMemory,
+          endMemory,
+          process.cpuUsage(),
+          process.cpuUsage()
+        );
       }
-
-      const finalBuffer = Buffer.concat(buffers);
-      const uploaded = await objectStorage.uploadBuffer({
-        key: finalObjectKey,
-        buffer: finalBuffer,
-        contentType: uploadSession.mimeType,
-        metadata: {
-          uploadId: uploadSession._id.toString(),
-          practiceSessionId: uploadSession.practiceSessionId.toString(),
-        },
-      });
-
-      finalAudioUrl = uploaded.url;
-
-      await objectStorage.deleteKeys(partKeys);
     }
 
     await PronunciationUploadSession.updateOne(

@@ -23,8 +23,9 @@ export async function createSpeechAnalysisWorker() {
 
   // Scale for 20k concurrent: 100 concurrent per worker requires 200 workers
   // For lower-scale deployments, this can be reduced to 5-20
+  // Note: PRONUNCIATION_JOB_TIMEOUT_MS is loaded from .env (currently 180s)
   const concurrency = parseInt(process.env.PRONUNCIATION_WORKER_CONCURRENCY || '100', 10);
-  const jobTimeoutMs = parseInt(process.env.PRONUNCIATION_JOB_TIMEOUT_MS || '90000', 10);
+  const jobTimeoutMs = parseInt(process.env.PRONUNCIATION_JOB_TIMEOUT_MS || '180000', 10);
 
   speechAnalysisWorker = new Worker<SpeechAnalysisJobData>(
     'speech-analysis',
@@ -37,10 +38,17 @@ export async function createSpeechAnalysisWorker() {
       }, jobTimeoutMs);
 
       try {
-        return await sharedService.processSpeechAnalysisJob(job.data.attemptId, job.data, {
-          signal: abortController.signal,
-          workerId,
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error(`Pronunciation analysis timed out after ${jobTimeoutMs / 1000}s`)), jobTimeoutMs);
         });
+
+        return await Promise.race([
+          sharedService.processSpeechAnalysisJob(job.data.attemptId, job.data, {
+            signal: abortController.signal,
+            workerId,
+          }),
+          timeoutPromise
+        ]);
       } finally {
         clearTimeout(timeoutHandle);
       }
@@ -59,8 +67,23 @@ export async function createSpeechAnalysisWorker() {
     console.log(`✅ Speech analysis job ${job.id} completed`);
   });
 
-  speechAnalysisWorker.on('failed', (job, err) => {
+  speechAnalysisWorker.on('failed', async (job, err) => {
     console.error(`❌ Speech analysis job ${job?.id} failed:`, err?.message || err);
+    try {
+      if (job?.data?.attemptId) {
+        const { PracticeAttempt } = await import('../models/index.js');
+        await PracticeAttempt.findByIdAndUpdate(job.data.attemptId, {
+          $set: {
+            status: 'failed',
+            processingStage: 'failed',
+            errorMessage: err?.message || 'Speech analysis encountered an unexpected error or timed out.',
+          }
+        });
+
+      }
+    } catch (dbErr) {
+      console.error('Failed to update DB on job failure:', dbErr);
+    }
   });
 
   speechAnalysisWorker.on('error', (err) => {

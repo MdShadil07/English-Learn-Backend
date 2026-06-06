@@ -7,6 +7,7 @@ import type { ForcedAlignmentResult } from './types.js';
 import type { WhisperWord } from '../speechProcessingPipeline.js';
 import { normalizeAlignmentWord, tokenizeForAlignment } from './wordSequenceAligner.js';
 import { telemetryService } from '../../telemetryService.js';
+import { mfaWorkerClient } from './mfaWorkerClient.js';
 
 const normalizeTranscript = (text: string) => text.trim().replace(/\s+/g, ' ');
 
@@ -14,29 +15,57 @@ export class MontrealForcedAlignerService {
   private readonly parser = new TextGridParser();
   private readonly lexicon = new PronunciationLexiconService();
 
-  isMfaConfigured() {
-    return Boolean(process.env.MFA_BINARY && process.env.MFA_DICTIONARY_PATH && process.env.MFA_ACOUSTIC_MODEL_PATH);
+  /**
+   * Returns true if ANY alignment path beyond Whisper is available:
+   *  - Remote MFA worker (recommended for production)
+   *  - Local MFA CLI (legacy, requires local conda install)
+   */
+  isMfaConfigured(): boolean {
+    return mfaWorkerClient.isEnabled() ||
+      Boolean(process.env.MFA_BINARY && process.env.MFA_DICTIONARY_PATH && process.env.MFA_ACOUSTIC_MODEL_PATH);
   }
 
   /**
    * Primary alignment method.
-   * Strategy (in priority order):
-   *   1. MFA forced alignment (if installed and configured) — most accurate
-   *   2. Whisper word-level timestamps — real speech alignment from ASR
-   *   3. Synthetic fallback — evenly spaced, lowest quality
+   *
+   * Strategy priority:
+   *   0. Remote MFA worker   — best quality, separate server (premium users)
+   *   1. Local MFA CLI       — legacy local install
+   *   2. Whisper timestamps  — fast, good for standard users
+   *   3. Synthetic fallback  — last resort (evenly spaced)
    */
   async alignAudioToTranscript(
     audioPath: string,
     transcript: string,
     workspaceDirectory: string,
     whisperWords?: WhisperWord[],
-    options: { signal?: AbortSignal } = {}
+    options: { signal?: AbortSignal; jobId?: string; audioUrl?: string; audioObjectKey?: string; analysisDepth?: 'fast' | 'deep' } = {}
   ): Promise<ForcedAlignmentResult> {
     const normalizedTranscript = normalizeTranscript(transcript);
     const mode = process.env.PRONUNCIATION_ALIGNMENT_STRICT === 'true' ? 'strict' : 'best_effort';
 
-    // Strategy 1: Try MFA if configured
-    if (this.isMfaConfigured()) {
+    // ── Strategy 0: Remote MFA worker (premium deep path) ──────────────────
+    if (mfaWorkerClient.isEnabled() && options.analysisDepth === 'deep') {
+      try {
+        return await mfaWorkerClient.align(
+          audioPath,
+          options.audioUrl,
+          options.audioObjectKey,
+          normalizedTranscript,
+          options.jobId,
+          options.signal
+        );
+      } catch (error) {
+        if (mode === 'strict') throw error;
+        console.warn(
+          '⚠️ MFA worker alignment failed, falling back to next strategy:',
+          (error as Error).message
+        );
+      }
+    }
+
+    // ── Strategy 1: Local MFA CLI ───────────────────────────────────────────
+    if (Boolean(process.env.MFA_BINARY && process.env.MFA_DICTIONARY_PATH && process.env.MFA_ACOUSTIC_MODEL_PATH)) {
       try {
         return await this.runMfa(audioPath, normalizedTranscript, workspaceDirectory, mode, options.signal);
       } catch (error) {
@@ -47,12 +76,12 @@ export class MontrealForcedAlignerService {
       }
     }
 
-    // Strategy 2: Use Whisper word timestamps (real speech alignment)
+    // ── Strategy 2: Whisper word-level timestamps ───────────────────────────
     if (whisperWords && whisperWords.length > 0) {
       return this.buildWhisperAlignment(normalizedTranscript, whisperWords, { mode });
     }
 
-    // Strategy 3: Synthetic fallback (last resort)
+    // ── Strategy 3: Synthetic fallback ────────────────────────────────────
     if (mode === 'strict') {
       throw new Error('No alignment method available (MFA not configured, no Whisper timestamps)');
     }

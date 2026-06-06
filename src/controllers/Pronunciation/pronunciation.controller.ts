@@ -1,12 +1,44 @@
 import { Request, Response } from 'express';
+import mongoose from 'mongoose';
 import { PronunciationService } from '../../services/Pronunciation/pronunciationService.js';
 import { AudioUploadService } from '../../services/Pronunciation/audioUploadService.js';
 import { toPronunciationAttemptResponse, toPronunciationUploadSessionResponse } from '../../services/Pronunciation/responseAdapters.js';
 import { QueueBackpressureError } from '../../services/Pronunciation/queueAdmission.js';
 
-
 interface AuthRequest extends Request {
   user?: any;
+}
+
+// Helper utility to execute database calls with automatic retries on connection loss/resets
+async function withDbRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
+  let attempts = 0;
+  while (attempts < maxAttempts) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      attempts++;
+      const isNetworkError = error?.name === 'MongoNetworkError' || 
+                             error?.name === 'MongoNetworkTimeoutError' ||
+                             error?.name === 'MongoServerError' ||
+                             error?.message?.includes('ECONNRESET') || 
+                             error?.message?.includes('connection') ||
+                             error?.message?.includes('timeout') ||
+                             error?.code === 'ECONNRESET';
+      
+      if (isNetworkError && attempts < maxAttempts) {
+        console.warn(`⚠️ Mongoose network error (attempt ${attempts}/${maxAttempts}): ${error.message || error}. Retrying in 1.5s...`);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        // Wait if mongoose is currently disconnected/reconnecting
+        if (mongoose.connection.readyState !== 1) {
+          console.log('🔄 Mongoose connection state is not connected. Waiting for reconnection...');
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error('Database operation failed after max retry attempts');
 }
 
 export class PronunciationController {
@@ -21,7 +53,7 @@ export class PronunciationController {
       }
 
       const payload = req.body || {};
-      const result = await this.service.createPracticeSession(user._id, payload);
+      const result = await withDbRetry(() => this.service.createPracticeSession(user._id, payload));
 
       return res.status(201).json({
         success: true,
@@ -42,7 +74,7 @@ export class PronunciationController {
       }
 
       const { sessionId } = req.params;
-      const session = await this.service.getPracticeSession(user._id, sessionId);
+      const session = await withDbRetry(() => this.service.getPracticeSession(user._id, sessionId));
       if (!session) {
         return res.status(404).json({ success: false, message: 'Practice session not found' });
       }
@@ -68,7 +100,7 @@ export class PronunciationController {
         return res.status(400).json({ success: false, message: 'audioUrl is required' });
       }
 
-      const attempt = await this.service.submitPracticeAttempt(user._id, sessionId, {
+      const attempt = await withDbRetry(() => this.service.submitPracticeAttempt(user._id, sessionId, {
         audioUrl,
         audioObjectKey,
         audioMimeType,
@@ -76,7 +108,7 @@ export class PronunciationController {
         transcript: transcript || '',
         attemptNumber: attemptNumber || 1,
         metadata,
-      });
+      }));
 
       return res.status(201).json({ success: true, data: toPronunciationAttemptResponse(attempt), message: 'Practice attempt submitted for analysis' });
     } catch (error: any) {
@@ -100,7 +132,7 @@ export class PronunciationController {
       }
 
       const { sessionId, attemptId } = req.params;
-      const attempt = await this.service.getAttempt(user._id, sessionId, attemptId);
+      const attempt = await withDbRetry(() => this.service.getAttempt(user._id, sessionId, attemptId));
       if (!attempt) {
         return res.status(404).json({ success: false, message: 'Practice attempt not found' });
       }
@@ -119,7 +151,7 @@ export class PronunciationController {
         return res.status(401).json({ success: false, message: 'Authentication required' });
       }
 
-      const recommendation = await this.service.recommendPassage(user._id, req.body || {});
+      const recommendation = await withDbRetry(() => this.service.recommendPassage(user._id, req.body || {}));
       return res.json({ success: true, data: recommendation });
     } catch (error: any) {
       console.error('Recommend pronunciation passage error:', error);
@@ -134,7 +166,7 @@ export class PronunciationController {
         return res.status(401).json({ success: false, message: 'Authentication required' });
       }
 
-      const uploadSession = await this.uploadService.createUploadSession(user._id, req.body || {});
+      const uploadSession = await withDbRetry(() => this.uploadService.createUploadSession(user._id, req.body || {}));
       return res.status(201).json({ success: true, data: toPronunciationUploadSessionResponse(uploadSession), message: 'Upload session created' });
     } catch (error: any) {
       console.error('Create pronunciation upload session error:', error);
@@ -149,7 +181,7 @@ export class PronunciationController {
         return res.status(401).json({ success: false, message: 'Authentication required' });
       }
 
-      const uploadSession = await this.uploadService.getUploadSession(user._id, req.params.uploadId);
+      const uploadSession = await withDbRetry(() => this.uploadService.getUploadSession(user._id, req.params.uploadId));
       if (!uploadSession) {
         return res.status(404).json({ success: false, message: 'Upload session not found' });
       }
@@ -173,7 +205,7 @@ export class PronunciationController {
       }
 
       const partIndex = Number(req.body.partIndex);
-      const result = await this.uploadService.uploadPart(user._id, req.params.uploadId, partIndex, req.file);
+      const result = await withDbRetry(() => this.uploadService.uploadPart(user._id, req.params.uploadId, partIndex, req.file!));
       return res.json({ success: true, data: result, message: 'Chunk uploaded successfully' });
     } catch (error: any) {
       console.error('Pronunciation upload chunk error:', error);
@@ -188,7 +220,7 @@ export class PronunciationController {
         return res.status(401).json({ success: false, message: 'Authentication required' });
       }
 
-      const result = await this.uploadService.completeUpload(user._id, req.params.uploadId);
+      const result = await withDbRetry(() => this.uploadService.completeUpload(user._id, req.params.uploadId));
       return res.json({ success: true, data: result, message: 'Audio upload completed' });
     } catch (error: any) {
       console.error('Complete pronunciation upload error:', error);
@@ -203,7 +235,7 @@ export class PronunciationController {
         return res.status(401).json({ success: false, message: 'Authentication required' });
       }
 
-      await this.uploadService.cancelUpload(user._id, req.params.uploadId);
+      await withDbRetry(() => this.uploadService.cancelUpload(user._id, req.params.uploadId));
       return res.json({ success: true, message: 'Upload cancelled successfully' });
     } catch (error: any) {
       console.error('Cancel pronunciation upload error:', error);
@@ -218,10 +250,10 @@ export class PronunciationController {
         return res.status(401).json({ success: false, message: 'Authentication required' });
       }
 
-      const { cefrLevel, completedPassageIds = [] } = req.body;
-      const recommendation = await this.service.recommendPassage(user._id, {
+      const { cefrLevel } = req.body;
+      const recommendation = await withDbRetry(() => this.service.recommendPassage(user._id, {
         cefrLevel: cefrLevel || user.cefrLevel,
-      });
+      }));
 
       return res.json({ success: true, data: recommendation });
     } catch (error: any) {
@@ -229,30 +261,6 @@ export class PronunciationController {
       return res.status(500).json({ success: false, message: 'Failed to get passage recommendations' });
     }
   };
-
-  getNextPassage = async (req: AuthRequest, res: Response) => {
-    try {
-      const user = req.user;
-      if (!user) {
-        return res.status(401).json({ success: false, message: 'Authentication required' });
-      }
-
-      const { currentPassageId, score, completedPassageIds = [] } = req.body;
-      if (!currentPassageId || score === undefined) {
-        return res.status(400).json({ success: false, message: 'currentPassageId and score are required' });
-      }
-
-      // Use recommendPassage to get the next passage based on user's level and proficiency
-      const nextResult = await this.service.recommendPassage(user._id, {
-        cefrLevel: user.cefrLevel || 'A1',
-      });
-
-      return res.json({ success: true, data: nextResult });
-    } catch (error: any) {
-      console.error('Get next passage error:', error);
-      return res.status(500).json({ success: false, message: 'Failed to get next passage' });
-    }
-  };}
+}
 
 export const pronunciationController = new PronunciationController();
-

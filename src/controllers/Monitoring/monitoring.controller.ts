@@ -5,6 +5,36 @@ import { database } from '../../config/database.js';
 import { redisCache } from '../../config/redis.js';
 import { telemetryService } from '../../services/telemetryService.js';
 
+let lastCpuUsage = process.cpuUsage();
+let lastCpuTime = process.hrtime();
+let cachedCpuPercent = 0;
+let lastCalculationTime = Date.now();
+
+function getIntervalCpuUsagePercent(): number {
+  const now = Date.now();
+  if (now - lastCalculationTime < 1000) {
+    return cachedCpuPercent;
+  }
+  
+  const currentCpuUsage = process.cpuUsage();
+  const currentCpuTime = process.hrtime();
+  
+  const elapsedMicros = (currentCpuTime[0] - lastCpuTime[0]) * 1e6 + (currentCpuTime[1] - lastCpuTime[1]) / 1e3;
+  const cpuMicros = (currentCpuUsage.user - lastCpuUsage.user) + (currentCpuUsage.system - lastCpuUsage.system);
+  const numCpus = os.cpus().length || 1;
+  
+  lastCpuUsage = currentCpuUsage;
+  lastCpuTime = currentCpuTime;
+  lastCalculationTime = now;
+  
+  if (elapsedMicros > 0) {
+    cachedCpuPercent = ((cpuMicros / elapsedMicros) / numCpus) * 100;
+  } else {
+    cachedCpuPercent = 0;
+  }
+  return cachedCpuPercent;
+}
+
 // Metrics storage for load testing
 interface MetricsStore {
   requestCount: number;
@@ -220,9 +250,8 @@ export class MonitoringController {
       }
 
       // Check CPU usage
-      const cpuUsage = process.cpuUsage();
+      const cpuUsagePercent = getIntervalCpuUsagePercent();
       const loadAverage = os.loadavg();
-      const cpuUsagePercent = (cpuUsage.user + cpuUsage.system) / 1000000; // Convert to percentage
 
       healthCheck.services.cpu = {
         usage: cpuUsagePercent,
@@ -324,7 +353,7 @@ export class MonitoringController {
           cpu: {
             user: process.cpuUsage().user,
             system: process.cpuUsage().system,
-            usagePercent: ((process.cpuUsage().user + process.cpuUsage().system) / 1000000).toFixed(2) + '%',
+            usagePercent: getIntervalCpuUsagePercent().toFixed(2) + '%',
           }
         },
 
