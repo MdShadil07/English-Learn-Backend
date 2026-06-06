@@ -163,7 +163,7 @@ export function detectPhenomena(
         { type: 'stress_marking', instruction: 'Mark sentence-level stress by tapping the beat on stressed syllables and reading aloud.' },
       ],
       visual: { key: 'stress_wave', svg: visuals.stress_wave, instruction: 'Aim for a clear higher pitch and louder intensity on the stressed syllable.' },
-      affectedWords: [...new Set((wordAnalysis || []).filter((w: any) => (w.componentScores?.stressCorrectness || 100) < 75).map(w => w.word).filter(Boolean))],
+      affectedWords: [...new Set((wordAnalysis || []).filter((w: any) => (w.componentScores?.stressCorrectness || 100) < 75).map(w => w.word).filter(Boolean))] as string[],
     });
   }
   if (syllableClips >= 1) {
